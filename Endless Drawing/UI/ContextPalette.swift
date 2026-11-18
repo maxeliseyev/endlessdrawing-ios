@@ -3,8 +3,20 @@ import SwiftUI
 struct ContextPalette: View {
     @Bindable var model: CanvasModel
 
+    /// Natural height when it fits on screen; scrolls only when the screen is genuinely too short.
     var body: some View {
-        ScrollView {
+        ViewThatFits(in: .vertical) {
+            tools
+            ScrollView { tools }
+        }
+        .background(.white)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.black.opacity(0.12)))
+        .shadow(color: .black.opacity(0.12), radius: 14, y: 4)
+        .accessibilityAction(.escape) { model.paletteAnchor = nil }
+    }
+
+    private var tools: some View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Text("Brush").font(.headline)
@@ -59,12 +71,6 @@ struct ContextPalette: View {
                 .frame(minHeight: 44)
             }
             .padding(20)
-        }
-        .background(.white)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.black.opacity(0.12)))
-        .shadow(color: .black.opacity(0.12), radius: 14, y: 4)
-        .accessibilityAction(.escape) { model.paletteAnchor = nil }
     }
 }
 
