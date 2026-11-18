@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 nonisolated struct InkColor: Equatable, Sendable {
@@ -23,6 +24,45 @@ nonisolated struct InkColor: Equatable, Sendable {
     }
 
     var components: SIMD3<Float> { SIMD3(Float(red), Float(green), Float(blue)) / 255 }
+
+    var isPreset: Bool { Self.palette.contains(self) }
+
+    /// Opaque sRGB for the system color picker.
+    var cgColor: CGColor {
+        CGColor(srgbRed: CGFloat(red) / 255, green: CGFloat(green) / 255, blue: CGFloat(blue) / 255, alpha: 1)
+    }
+
+    /// Any picked color (P3, grayscale, eyedropper sample) as opaque sRGB: alpha is ignored, the wire has none,
+    /// and out-of-gamut channels are clamped.
+    init?(_ color: CGColor) {
+        guard let srgb = CGColorSpace(name: CGColorSpace.sRGB),
+              let converted = color.converted(to: srgb, intent: .defaultIntent, options: nil),
+              let parts = converted.components, parts.count >= 3, parts[0...2].allSatisfy(\.isFinite) else { return nil }
+        func byte(_ value: CGFloat) -> UInt8 { UInt8((min(max(value, 0), 1) * 255).rounded()) }
+        self.init(red: byte(parts[0]), green: byte(parts[1]), blue: byte(parts[2]))
+    }
+}
+
+/// Custom colors the user actually drew with, newest first; presets are never repeated here.
+nonisolated struct RecentColors: Equatable, Sendable {
+    static let capacity = 7
+    private(set) var colors: [InkColor] = []
+
+    init(colors: [InkColor] = []) {
+        for color in colors.reversed() { use(color) }
+    }
+
+    init(hexes: [String]) { self.init(colors: hexes.compactMap(InkColor.init(hex:))) }
+    var hexes: [String] { colors.map(\.hex) }
+
+    /// True when the list changed.
+    @discardableResult mutating func use(_ color: InkColor) -> Bool {
+        guard !color.isPreset, colors.first != color else { return false }
+        colors.removeAll { $0 == color }
+        colors.insert(color, at: 0)
+        if colors.count > Self.capacity { colors.removeLast(colors.count - Self.capacity) }
+        return true
+    }
 }
 
 nonisolated struct BrushStyle: Equatable, Sendable {

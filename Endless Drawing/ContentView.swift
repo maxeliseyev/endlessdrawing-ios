@@ -4,6 +4,8 @@ struct ContentView: View {
     @State private var model: CanvasModel
     /// Measured palette size, so the anchor clamp uses the real height rather than a fixed guess.
     @State private var paletteSize = CGSize(width: 320, height: 440)
+    /// Live finger translation while the palette is dragged by its header; committed to the anchor on end.
+    @GestureState private var paletteDrag = CGSize.zero
 
     init(model: CanvasModel = CanvasModel()) { _model = State(initialValue: model) }
 
@@ -12,19 +14,25 @@ struct ContentView: View {
             CanvasRepresentable(model: model).ignoresSafeArea()
             if let anchor = model.paletteAnchor {
                 GeometryReader { geometry in
-                    let width = min(320, max(1, geometry.size.width - 32))
-                    let maxHeight = max(1, geometry.size.height - 32)
-                    let height = min(paletteSize.height, maxHeight)
-                    let localAnchor = CGPoint(x: anchor.x - geometry.safeAreaInsets.leading,
-                                              y: anchor.y - geometry.safeAreaInsets.top)
+                    let layout = PaletteLayout(area: geometry.size, paletteHeight: paletteSize.height)
+                    let insets = CGPoint(x: geometry.safeAreaInsets.leading, y: geometry.safeAreaInsets.top)
+                    // Where the palette rests now, before any drag: the stored anchor clamped on screen.
+                    let resting = layout.center(for: CGPoint(x: anchor.x - insets.x, y: anchor.y - insets.y))
+                    let shown = layout.center(for: CGPoint(x: resting.x + paletteDrag.width, y: resting.y + paletteDrag.height))
+                    let move = DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                        .updating($paletteDrag) { value, state, _ in state = value.translation }
+                        .onEnded { value in
+                            let end = layout.center(for: CGPoint(x: resting.x + value.translation.width,
+                                                                 y: resting.y + value.translation.height))
+                            model.paletteAnchor = CGPoint(x: end.x + insets.x, y: end.y + insets.y)
+                        }
                     Color.clear.contentShape(Rectangle()).ignoresSafeArea()
                         .onTapGesture { model.paletteAnchor = nil }
-                    ContextPalette(model: model)
-                        .frame(width: width)
-                        .frame(maxHeight: maxHeight)
+                    ContextPalette(model: model, move: AnyGesture(move.map { _ in }))
+                        .frame(width: layout.width)
+                        .frame(maxHeight: layout.maxHeight)
                         .onGeometryChange(for: CGSize.self) { $0.size } action: { paletteSize = $0 }
-                        .position(x: min(max(localAnchor.x, width / 2 + 16), geometry.size.width - width / 2 - 16),
-                                  y: min(max(localAnchor.y, height / 2 + 16), geometry.size.height - height / 2 - 16))
+                        .position(shown)
                 }
             }
         }
@@ -33,6 +41,28 @@ struct ContentView: View {
             Button("Retry") { model.failure = nil; model.command?(.retry) }
             Button("Close", role: .cancel) { model.failure = nil }
         } message: { Text(model.failure ?? "") }
+    }
+}
+
+/// Palette size and on-screen clamping inside the safe area, with a 16 pt margin.
+struct PaletteLayout: Equatable {
+    static let margin: CGFloat = 16
+    let width: CGFloat
+    let maxHeight: CGFloat
+    let height: CGFloat
+    let area: CGSize
+
+    init(area: CGSize, paletteHeight: CGFloat) {
+        self.area = area
+        width = min(320, max(1, area.width - 2 * Self.margin))
+        maxHeight = max(1, area.height - 2 * Self.margin)
+        height = min(paletteHeight, maxHeight)
+    }
+
+    /// Centre for a requested point, keeping the whole palette on screen.
+    func center(for point: CGPoint) -> CGPoint {
+        CGPoint(x: min(max(point.x, width / 2 + Self.margin), area.width - width / 2 - Self.margin),
+                y: min(max(point.y, height / 2 + Self.margin), area.height - height / 2 - Self.margin))
     }
 }
 

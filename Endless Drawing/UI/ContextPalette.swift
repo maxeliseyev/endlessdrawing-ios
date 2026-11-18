@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ContextPalette: View {
     @Bindable var model: CanvasModel
+    /// Drag that moves the palette, attached to the header only so sliders and buttons keep their own gestures.
+    var move: AnyGesture<Void>? = nil
 
     /// Natural height when it fits on screen; scrolls only when the screen is genuinely too short.
     var body: some View {
@@ -16,15 +18,43 @@ struct ContextPalette: View {
         .accessibilityAction(.escape) { model.paletteAnchor = nil }
     }
 
+    /// Grabber + title: the handle for moving the palette with a finger or the Pencil.
+    @ViewBuilder private var header: some View {
+        let handle = VStack(spacing: 4) {
+            Capsule().fill(.secondary.opacity(0.4)).frame(width: 36, height: 5)
+                .accessibilityHidden(true)
+            HStack {
+                Text("Brush").font(.headline)
+                Spacer()
+                Button { model.paletteAnchor = nil } label: { Image(systemName: "xmark") }
+                    .accessibilityLabel(Text("Close tools"))
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+        }
+        .contentShape(Rectangle())
+        if let move { handle.gesture(move) } else { handle }
+    }
+
+    private var customColor: Binding<CGColor> {
+        Binding(get: { model.style.color.cgColor },
+                set: { if let color = InkColor($0) { model.style.color = color } })
+    }
+
+    private func swatch(_ ink: InkColor) -> some View {
+        Button { model.style.color = ink } label: {
+            Circle().fill(Color(cgColor: ink.cgColor))
+                .frame(width: 28, height: 28)
+                .overlay(Circle().stroke(.black.opacity(0.15)))
+                .overlay(Circle().stroke(.primary, lineWidth: model.style.color == ink ? 2 : 0).padding(-3))
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .accessibilityLabel(Text(ink.hex))
+        .accessibilityAddTraits(model.style.color == ink ? .isSelected : [])
+    }
+
     private var tools: some View {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text("Brush").font(.headline)
-                    Spacer()
-                    Button { model.paletteAnchor = nil } label: { Image(systemName: "xmark") }
-                        .accessibilityLabel(Text("Close tools"))
-                        .frame(minWidth: 44, minHeight: 44)
-                }
+                header
                 Text(model.statusText)
                     .font(.footnote).foregroundStyle(.secondary)
                 if let state = model.worldState, state.pendingCount > 0 {
@@ -40,17 +70,22 @@ struct ContextPalette: View {
                     Text("Spray").tag(BrushKind.spray)
                 }.pickerStyle(.segmented)
                 HStack(spacing: 0) {
-                    ForEach(Array(InkColor.palette.enumerated()), id: \.offset) { _, ink in
-                        Button { model.style.color = ink } label: {
-                            Circle().fill(Color(red: Double(ink.red) / 255, green: Double(ink.green) / 255,
-                                                blue: Double(ink.blue) / 255))
-                                .frame(width: 28, height: 28)
-                                .overlay(Circle().stroke(.primary, lineWidth: model.style.color == ink ? 2 : 0).padding(-3))
-                                .frame(maxWidth: .infinity, minHeight: 44)
+                    ForEach(InkColor.palette, id: \.hex) { swatch($0) }
+                    // System picker: grid, spectrum, sliders and the eyedropper that samples the screen.
+                    ColorPicker(selection: customColor, supportsOpacity: false) { Text("Custom color") }
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .accessibilityLabel(Text("Custom color"))
+                }
+                if !model.recentColors.colors.isEmpty {
+                    HStack(spacing: 0) {
+                        ForEach(model.recentColors.colors, id: \.hex) { swatch($0) }
+                        ForEach(model.recentColors.colors.count..<RecentColors.capacity, id: \.self) { _ in
+                            Color.clear.frame(maxWidth: .infinity, minHeight: 44)
                         }
-                        .accessibilityLabel(Text(String(format: "#%02X%02X%02X", ink.red, ink.green, ink.blue)))
-                        .accessibilityAddTraits(model.style.color == ink ? .isSelected : [])
                     }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel(Text("Recent colors"))
                 }
                 VStack(alignment: .leading) {
                     Text("Width")

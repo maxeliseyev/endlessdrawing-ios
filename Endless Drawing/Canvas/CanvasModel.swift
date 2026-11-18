@@ -12,6 +12,10 @@ final class CanvasModel {
     /// For the Pencil "switch to previous tool" preference: the brush shape used before the current one.
     @ObservationIgnored private(set) var previousBrush: BrushKind?
     var paletteAnchor: CGPoint?
+    /// Custom colors used for strokes, shown under the presets; persisted only in the live app.
+    private(set) var recentColors: RecentColors
+    @ObservationIgnored private let defaults: UserDefaults?
+    private static let recentColorsKey = "recentColors"
     var failure: String?
     var canUndo = false
     var graphicsLimited = false
@@ -35,8 +39,16 @@ final class CanvasModel {
     @ObservationIgnored private var lastCamera = Camera()
 
     /// Nil is explicit local/test mode. The application injects .live, never a runtime fallback.
-    init(environment: DrawingEnvironment? = nil, session: WorldSession? = nil) {
+    init(environment: DrawingEnvironment? = nil, session: WorldSession? = nil, defaults: UserDefaults? = nil) {
         self.environment = environment; world = session; storageReady = session != nil
+        self.defaults = defaults
+        recentColors = RecentColors(hexes: defaults?.stringArray(forKey: Self.recentColorsKey) ?? [])
+    }
+
+    /// Called when a stroke starts: remembers the custom color it was drawn with.
+    func strokeStarted(with color: InkColor) {
+        guard recentColors.use(color) else { return }
+        defaults?.set(recentColors.hexes, forKey: Self.recentColorsKey)
     }
     deinit {
         bootstrap?.cancel(); updates?.cancel(); cameraSave?.cancel()

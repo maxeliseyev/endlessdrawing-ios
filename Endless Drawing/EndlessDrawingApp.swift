@@ -18,7 +18,8 @@ struct EndlessDrawingApp: App {
     var body: some Scene {
         WindowGroup {
             // Unit-test hosts and previews must never connect to the public canvas implicitly.
-            ContentView(model: CanvasModel(environment: Self.isTestHost ? nil : .live))
+            ContentView(model: CanvasModel(environment: Self.isTestHost ? nil : .live,
+                                            defaults: Self.isTestHost ? nil : .standard))
         }
     }
 }

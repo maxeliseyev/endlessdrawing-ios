@@ -210,6 +210,7 @@ final class CanvasViewController: UIViewController {
             pencilID = ObjectIdentifier(touch)
             lastPencilPoint = touch.location(in: surface)
             input.begin(at: world(touch), timestamp: touch.timestamp, style: model.style)
+            model.strokeStarted(with: model.style.color)
             updatePreview()
         }
         for touch in touches where touch.type == .direct {

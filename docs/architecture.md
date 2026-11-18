@@ -180,7 +180,7 @@ Hover через `UIHoverGestureRecognizer` показывает footprint те�
 
 ### Палитра и альтернативные команды
 
-SwiftUI overlay/popover, а не постоянный toolbar. Сохранить anchor при повороте, выполнить clamp вместо закрытия. Подписи локализованы через String Catalog. Цвета: `#202020`, `#E46C60`, `#E9AF59`, `#69A27F`, `#7195D0`, `#AD8ACB`, плюс произвольный RGB без неоговорённого alpha в color picker.
+SwiftUI overlay/popover, а не постоянный toolbar. Сохранить anchor при повороте, выполнить clamp вместо закрытия. Подписи локализованы через String Catalog. Цвета: `#202020`, `#E46C60`, `#E9AF59`, `#69A27F`, `#7195D0`, `#AD8ACB`, плюс произвольный RGB без неоговорённого alpha в color picker. Статус (18.11.2026): системный `ColorPicker` (`supportsOpacity: false`: сетка, спектр, ползунки, пипетка по экрану) переводит выбор в sRGB-байты с clamp; ряд «Recent colors» — до 7 своих цветов, которыми реально начинали штрих, новые первыми, без пресетов, в `UserDefaults` только в live-приложении. Палитру можно перетаскивать за заголовок; позиция ограничивается экраном (`PaletteLayout`).
 
 Команды: long press, secondary click, accessibility action «Инструменты», keyboard context menu/Shift+F10, ⌘Z для undo. Accessibility entry у canvas доступен VoiceOver, но не рисует постоянную видимую кнопку. Стандартный accessibility escape закрывает палитру. Доступность на физическом iPad проверяется отдельно от наличия accessibility labels.
 
