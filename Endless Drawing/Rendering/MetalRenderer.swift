@@ -242,11 +242,19 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         guard isRenderingEnabled, !failed, view.bounds.width > 0, view.bounds.height > 0 else { return }
         // Never block the input thread waiting for the GPU.
+        // Frame-pacing diagnostics: every lost frame is attributed (all in-flight slots busy, no drawable,
+        // or a slow currentDrawable wait), and each encode says whether the display link drove it.
         guard slots.wait(timeout: .now()) == .success else {
+            Signposts.frame.emitEvent("skip", "slots")
             requestFrame(in: view, after: 1.0 / 120)
             return
         }
-        guard let drawable = view.currentDrawable else {
+        let waitStart = CACurrentMediaTime()
+        let next = view.currentDrawable
+        let wait = (CACurrentMediaTime() - waitStart) * 1000
+        if wait > 1 { Signposts.frame.emitEvent("drawableWait", "\(wait, format: .fixed(precision: 2)) ms") }
+        guard let drawable = next else {
+            Signposts.frame.emitEvent("skip", "drawable")
             slots.signal()
             requestFrame(in: view, after: 1.0 / 120)
             return
@@ -258,7 +266,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             return
         }
         do {
-            let interval = Signposts.frame.beginInterval("encode")
+            let interval = Signposts.frame.beginInterval("encode", "\(view.isPaused ? "demand" : "loop", privacy: .public)")
             try encode(to: drawable.texture,
                        viewport: CanvasSize(width: view.bounds.width, height: view.bounds.height),
                        command: command)
