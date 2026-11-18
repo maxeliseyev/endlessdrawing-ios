@@ -346,7 +346,7 @@ final class CanvasViewController: UIViewController {
 
     private func requestFrame() {
         renderer?.camera = camera
-        surface?.setNeedsDisplay()
+        if surface?.isPaused != false { surface?.setNeedsDisplay() } // the running loop draws the next vsync anyway
         guard model.isShared, viewport.isValid,
               camera != lastViewportCamera || viewport != lastViewportSize else { return }
         lastViewportCamera = camera; lastViewportSize = viewport
@@ -510,9 +510,15 @@ final class CanvasViewController: UIViewController {
         }
     }
 
+    /// During a gesture MTKView's own display link draws every vsync. With `enableSetNeedsDisplay` left on,
+    /// the internal loop never runs and frames only follow touch-driven setNeedsDisplay, so a late input
+    /// batch slipped a frame (~9% of frames held two vsyncs on iPad). Idle: draw on demand only.
     private func updateFrameLoop() {
+        guard let surface else { return }
         let navigating = !navigation.blocked && !navigation.touches.isEmpty
-        surface?.isPaused = renderer?.isRenderingEnabled != true || (pencilID == nil && !navigating)
+        let running = renderer?.isRenderingEnabled == true && (pencilID != nil || navigating)
+        surface.enableSetNeedsDisplay = !running
+        surface.isPaused = !running
     }
 
     private func armLongPress(at point: WorldPoint) {
@@ -569,6 +575,7 @@ final class CanvasViewController: UIViewController {
             next.isRenderingEnabled = viewIfLoaded?.window != nil && UIApplication.shared.applicationState == .active
             next.onFailure = { [weak self] message in
                 self?.surface.isPaused = true
+                self?.surface.enableSetNeedsDisplay = true
                 if self?.model.failure == nil { self?.model.failure = message }
             }
             renderer = next

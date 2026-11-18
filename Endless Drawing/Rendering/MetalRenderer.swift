@@ -288,8 +288,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     private func requestFrame(in view: MTKView, after delay: TimeInterval) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak view] in
-            guard let self, isRenderingEnabled, !failed, view?.window != nil else { return }
-            view?.setNeedsDisplay()
+            guard let self, isRenderingEnabled, !failed, let view, view.window != nil, view.isPaused else { return }
+            view.setNeedsDisplay()
         }
     }
 
