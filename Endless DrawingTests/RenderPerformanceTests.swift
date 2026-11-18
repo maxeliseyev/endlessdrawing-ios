@@ -8,11 +8,11 @@ import Testing
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["ENDLESS_RENDER_BENCH"] == "1"))
 @MainActor
 struct RenderPerformanceTests {
-    static let viewport = CanvasSize(width: 1210, height: 834) // iPad Pro 11" points
+    nonisolated static let viewport = CanvasSize(width: 1210, height: 834) // iPad Pro 11" points
     static let scale = 2
 
     /// Deterministic mixed scene around the origin: mostly round, some translucent, all brush kinds.
-    static func scene(count: Int, seed: UInt64 = 7) -> [LocalStroke] {
+    nonisolated static func scene(count: Int, seed: UInt64 = 7) -> [LocalStroke] {
         var state = seed
         func next() -> Double {
             state &+= 0x9E37_79B9_7F4A_7C15
@@ -80,12 +80,15 @@ struct RenderPerformanceTests {
         }
     }
 
-    private func run(count: Int) throws {
+    private func run(count: Int) async throws {
         let bench = try Bench()
         let strokes = Self.scene(count: count)
         let prepareStart = CACurrentMediaTime()
         let gpu = try strokes.map { try bench.renderer.upload(#require(BrushGeometry.prepare($0))) }
         let prepare = (CACurrentMediaTime() - prepareStart) * 1000
+        let batchStart = CACurrentMediaTime()
+        _ = await GeometryWorker.prepareBatch(strokes)
+        let batch = (CACurrentMediaTime() - batchStart) * 1000
         bench.renderer.strokes = gpu
         let first = try bench.frame()
         let idle = try bench.frames(5) {}
@@ -99,11 +102,11 @@ struct RenderPerformanceTests {
         let remove = try bench.frames(1) { bench.renderer.strokes.remove(at: count / 2) }
         func f(_ value: Double) -> String { String(format: "%.2f", value) }
         func t(_ value: Bench.Timing) -> String { "\(f(value.total))(cpu \(f(value.encode))/gpu \(f(value.gpu)))" }
-        print("BENCH n=\(count) prepare+upload=\(f(prepare))ms first=\(t(first)) idle=\(t(idle)) pan=\(t(pan)) "
+        print("BENCH n=\(count) prepare+upload=\(f(prepare))ms batchPrepare=\(f(batch))ms first=\(t(first)) idle=\(t(idle)) pan=\(t(pan)) "
               + "zoom=\(t(zoom)) add=\(t(add)) remove=\(t(remove)) ms/frame")
     }
 
-    @Test func scalesWithStrokeCount() throws {
-        for count in [250, 1000, 2000] { try run(count: count) }
+    @Test func scalesWithStrokeCount() async throws {
+        for count in [250, 1000, 2000] { try await run(count: count) }
     }
 }

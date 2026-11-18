@@ -65,4 +65,22 @@ actor GeometryWorker {
     func prepare(_ stroke: LocalStroke, realPointCount: Int? = nil) -> PreparedStroke? {
         BrushGeometry.prepare(stroke, realPointCount: realPointCount)
     }
+
+    /// Scene loading: one contiguous slice per core, results in input order. Pure CPU work, no Metal.
+    nonisolated static func prepareBatch(_ strokes: [LocalStroke]) async -> [PreparedStroke?] {
+        let lanes = min(strokes.count, max(1, ProcessInfo.processInfo.activeProcessorCount - 1))
+        guard lanes > 1 else { return strokes.map { BrushGeometry.prepare($0) } }
+        let size = (strokes.count + lanes - 1) / lanes
+        return await withTaskGroup(of: (Int, [PreparedStroke?]).self) { group in
+            for start in stride(from: 0, to: strokes.count, by: size) {
+                let slice = Array(strokes[start..<min(strokes.count, start + size)])
+                group.addTask { (start, slice.map { BrushGeometry.prepare($0) }) }
+            }
+            var result = [PreparedStroke?](repeating: nil, count: strokes.count)
+            for await (start, prepared) in group {
+                result.replaceSubrange(start..<(start + prepared.count), with: prepared)
+            }
+            return result
+        }
+    }
 }

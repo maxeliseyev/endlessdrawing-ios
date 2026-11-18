@@ -23,6 +23,26 @@ struct SceneStoreTests {
         #expect(!scene.loading)
     }
 
+    /// The memoized order must observe every mutation path: chunks, end, live events, acks, removal, hiding.
+    @Test func orderedSceneTracksEveryMutationAndHidesWithoutResorting() throws {
+        let a = try M2TestSupport.confirmed(M2TestSupport.payload(), sequence: 4)
+        let b = try M2TestSupport.confirmed(M2TestSupport.payload(), sequence: 2)
+        let c = try M2TestSupport.confirmed(M2TestSupport.payload(), sequence: 7)
+        let region = try bounds(); var scene = SceneStore()
+        scene.subscribe(id: "s", bounds: region); try scene.begin(id: "s")
+        #expect(scene.ordered(hidden: []).isEmpty)
+        try scene.chunk(id: "s", strokes: [b, a])
+        #expect(scene.ordered(hidden: []).map(\.server.sequence) == [2, 4])
+        try scene.end(id: "s")
+        try scene.created(id: "s", stroke: c)
+        #expect(scene.ordered(hidden: []).map(\.server.sequence) == [2, 4, 7])
+        #expect(scene.ordered(hidden: [a.payload.id]).map(\.server.sequence) == [2, 7])
+        try scene.remove(b.payload.id, sequence: 2)
+        #expect(scene.ordered(hidden: []).map(\.server.sequence) == [4, 7])
+        scene.subscribe(id: "t", bounds: region)
+        #expect(scene.ordered(hidden: []).map(\.server.sequence) == [4, 7]) // bounded stale display
+    }
+
     @Test func acknowledgementsSurviveSnapshotBoundaryButDeletionWinsAgainstLateChunksAndAcks() throws {
         let stroke = try M2TestSupport.confirmed(M2TestSupport.payload(), sequence: 3)
         let region = try bounds(); var scene = SceneStore()

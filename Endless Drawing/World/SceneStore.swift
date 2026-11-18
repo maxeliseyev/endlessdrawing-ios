@@ -18,10 +18,12 @@ nonisolated struct SceneStore {
     private(set) var subscriptionID: String?
     private(set) var bounds: WireBounds?
     private(set) var loading = false
-    private var confirmed: [UUID: SceneStroke] = [:]
-    private var staging: [UUID: SceneStroke]?
-    private var acknowledgements: [UUID: SceneStroke] = [:]
-    private var tombstones: [UUID: Int64] = [:] // 0 = authoritative absence without a disclosed seq
+    private var confirmed: [UUID: SceneStroke] = [:] { didSet { order = nil } }
+    private var staging: [UUID: SceneStroke]? { didSet { order = nil } }
+    private var acknowledgements: [UUID: SceneStroke] = [:] { didSet { order = nil } }
+    private var tombstones: [UUID: Int64] = [:] { didSet { order = nil } } // 0 = authoritative absence without a disclosed seq
+    /// Displayed records in seq order, rebuilt only after a mutation (publishing must not re-sort per message).
+    private var order: [SceneStroke]?
     private var sequenceIDs: [Int64: UUID] = [:]
     private var pointCosts: [UUID: Int] = [:]
     private var points = 0
@@ -109,6 +111,18 @@ nonisolated struct SceneStore {
         return result.values.filter {
             tombstones[$0.server.payload.id] == nil && !hidden.contains($0.server.payload.id) && $0.extent.intersects(bounds)
         }.sorted { $0.server.sequence < $1.server.sequence }
+    }
+
+    /// Every displayed record of the scope in seq order; visibility is the renderer's job (tiles/index).
+    mutating func ordered(hidden: Set<UUID>) -> [SceneStroke] {
+        if order == nil {
+            var result = confirmed
+            if let staging { result.merge(staging) { _, new in new } }
+            result.merge(acknowledgements) { _, new in new }
+            order = result.values.filter { tombstones[$0.server.payload.id] == nil }.sorted { $0.server.sequence < $1.server.sequence }
+        }
+        guard let order else { return [] }
+        return hidden.isEmpty ? order : order.filter { !hidden.contains($0.server.payload.id) }
     }
 
     private func record(_ id: UUID) -> SceneStroke? { acknowledgements[id] ?? staging?[id] ?? confirmed[id] }

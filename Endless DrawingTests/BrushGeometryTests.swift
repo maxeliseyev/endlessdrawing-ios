@@ -53,4 +53,18 @@ struct BrushGeometryTests {
             #expect(preview.realTriangleCount == preview.triangles.count)
         }
     }
+
+    @Test func parallelBatchMatchesSerialGeometryInInputOrder() async throws {
+        let strokes = RenderPerformanceTests.scene(count: 97)
+        let batch = await GeometryWorker.prepareBatch(strokes)
+        #expect(batch.count == strokes.count)
+        for (stroke, prepared) in zip(strokes, batch) {
+            let serial = try #require(BrushGeometry.prepare(stroke))
+            let parallel = try #require(prepared)
+            #expect(parallel.id == stroke.id)
+            #expect(parallel.triangles == serial.triangles)
+            #expect(parallel.circles.map(\.center) == serial.circles.map(\.center))
+        }
+        #expect(await GeometryWorker.prepareBatch([]).isEmpty)
+    }
 }

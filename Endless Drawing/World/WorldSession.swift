@@ -64,6 +64,8 @@ actor WorldSession {
     private var suspendedForRegion: WireBounds?
     private var blocked = false
     private var snapshotInterval: OSSignpostIntervalState?
+    private var lastPublish = 0.0
+    private var publishFlush: Task<Void, Never>?
     private var snapshotChunks = 0
     private let onSpawn: @Sendable (WorldPoint) async -> Void
 
@@ -109,12 +111,13 @@ actor WorldSession {
         await stop(); issue = nil; start()
     }
 
+    /// Pan/zoom only steer subscriptions; the published scene does not depend on the viewport.
     func update(region: CanvasRegion) {
         self.region = region
         if let suspendedForRegion, suspendedForRegion != region.subscription {
             self.suspendedForRegion = nil; snapshotTimeouts = 0; issue = nil
+            publish()
         }
-        publish()
     }
 
     func enqueue(_ stroke: LocalStroke) async throws -> WorldRenderState {
@@ -140,8 +143,23 @@ actor WorldSession {
 
     @discardableResult private func publish() -> WorldRenderState {
         revision &+= 1
+        publishFlush?.cancel(); publishFlush = nil
+        lastPublish = ProcessInfo.processInfo.systemUptime
         let value = state(); output?.yield(value); return value
     }
+
+    /// Bursts of network messages publish at most about once per display frame; the last one always lands.
+    private func publishSoon() {
+        let wait = lastPublish + 1.0 / 60 - ProcessInfo.processInfo.systemUptime
+        guard wait > 0 else { publish(); return }
+        guard publishFlush == nil else { return }
+        publishFlush = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(wait)) } catch { return }
+            await self?.flushPublish()
+        }
+    }
+
+    private func flushPublish() { if publishFlush != nil { publishFlush = nil; publish() } }
 
     private func state() -> WorldRenderState {
         let hidden = Set(journalState.operations.compactMap { operation -> UUID? in
@@ -150,7 +168,7 @@ actor WorldSession {
             case .delete(let id): id
             }
         })
-        let records = region.map { scene.visible(in: $0.rendering, hidden: hidden) } ?? []
+        let records = scene.ordered(hidden: hidden)
         let confirmedIDs = Set(records.map { $0.server.payload.id })
         let pending = journalState.operations.sorted { $0.ordinal < $1.ordinal }.compactMap { operation -> LocalStroke? in
             guard case .create(let payload) = operation.payload, !operation.cancelled,
@@ -341,6 +359,6 @@ actor WorldSession {
             } else { throw TransportFailure.malformedMessage }
         }
         guard token == epoch else { return }
-        publish()
+        publishSoon()
     }
 }
