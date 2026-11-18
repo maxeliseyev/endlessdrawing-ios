@@ -1,4 +1,5 @@
 import MetalKit
+import os
 import SwiftUI
 
 struct CanvasRepresentable: UIViewControllerRepresentable {
@@ -342,7 +343,9 @@ final class CanvasViewController: UIViewController {
     private func applyShared(_ state: WorldRenderState) {
         guard state.revision > (sharedState?.revision ?? 0) else { return }
         sharedState = state
+        let interval = Signposts.frame.beginInterval("applyScene")
         rebuildSharedScene()
+        Signposts.frame.endInterval("applyScene", interval, "\(state.confirmed.count) confirmed")
     }
 
     private func rebuildSharedScene() {
@@ -371,7 +374,10 @@ final class CanvasViewController: UIViewController {
         guard sceneGeometryTask == nil, !renderBudgetBlocked else { return }
         sceneGeometryTask = Task { [weak self] in
             guard let self else { return }
+            let interval = Signposts.geometry.beginInterval("scene")
+            var built = 0
             defer {
+                Signposts.geometry.endInterval("scene", interval, "\(built) strokes")
                 sceneGeometryTask = nil
                 if Task.isCancelled, renderer?.isRenderingEnabled == true { prepareSharedGeometry() }
             }
@@ -382,7 +388,7 @@ final class CanvasViewController: UIViewController {
                 guard localStrokes.contains(where: { $0.id == stroke.id }), let prepared else { continue }
                 guard let renderer else { return }
                 guard canUpload(prepared) else { return }
-                do { gpuStrokes[stroke.id] = try renderer.upload(prepared); synchronizeStrokes() }
+                do { gpuStrokes[stroke.id] = try renderer.upload(prepared); built += 1; synchronizeStrokes() }
                 catch { model.failure = String(localized: "Not enough graphics memory. Try again."); return }
             }
         }

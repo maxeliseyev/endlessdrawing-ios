@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 protocol CanvasTransport: Actor {
     func connect() async throws -> WebSocketTransport.Connection
@@ -62,6 +63,8 @@ actor WorldSession {
     private var reconnectRequested = false
     private var suspendedForRegion: WireBounds?
     private var blocked = false
+    private var snapshotInterval: OSSignpostIntervalState?
+    private var snapshotChunks = 0
     private let onSpawn: @Sendable (WorldPoint) async -> Void
 
     init(transport: any CanvasTransport, identity: DrawingIdentity, journal: OperationJournal,
@@ -227,6 +230,8 @@ actor WorldSession {
                pacer.admit(.subscribe, now: now) {
                 let id = UUID().uuidString.lowercased()
                 scene.subscribe(id: id, bounds: region.subscription)
+                if let snapshotInterval { Signposts.snapshot.endInterval("subscription", snapshotInterval, "superseded") }
+                snapshotInterval = Signposts.snapshot.beginInterval("subscription"); snapshotChunks = 0
                 snapshotDeadline = now + timing.snapshot; status = .loading; publish()
                 try await transport.send(.subscribe(id: id, bounds: region.subscription))
                 return
@@ -280,11 +285,20 @@ actor WorldSession {
         case .snapshotBegin(let id):
             guard helloDeadline == nil else { throw TransportFailure.malformedMessage }
             try scene.begin(id: id)
-        case .snapshotChunk(let id, let strokes): try scene.chunk(id: id, strokes: strokes)
+        case .snapshotChunk(let id, let strokes):
+            try scene.chunk(id: id, strokes: strokes)
+            if id == scene.subscriptionID {
+                snapshotChunks += 1
+                Signposts.snapshot.emitEvent("chunk", "\(self.snapshotChunks) #\(strokes.count)")
+            }
         case .snapshotEnd(let id):
             let current = id == scene.subscriptionID
             try scene.end(id: id)
-            if current { snapshotDeadline = nil; snapshotTimeouts = 0; status = .live }
+            if current {
+                snapshotDeadline = nil; snapshotTimeouts = 0; status = .live
+                if let snapshotInterval { Signposts.snapshot.endInterval("subscription", snapshotInterval, "\(self.snapshotChunks) chunks") }
+                snapshotInterval = nil
+            }
         case .created(let id, let stroke): try scene.created(id: id, stroke: stroke)
         case .deleted(let id, let strokeID, let sequence): try scene.deleted(id: id, strokeID: strokeID, sequence: sequence)
         case .createAcknowledged(let requestID, let stroke):

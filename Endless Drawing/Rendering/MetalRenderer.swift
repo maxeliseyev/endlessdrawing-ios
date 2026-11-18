@@ -1,4 +1,5 @@
 import MetalKit
+import os
 
 @MainActor
 final class MetalRenderer: NSObject, MTKViewDelegate {
@@ -138,12 +139,16 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             return
         }
         do {
+            let interval = Signposts.frame.beginInterval("encode")
             try encode(to: drawable.texture,
                        viewport: CanvasSize(width: view.bounds.width, height: view.bounds.height),
                        command: command)
+            Signposts.frame.endInterval("encode", interval)
             let slots = slots
             command.addCompletedHandler { [weak self] buffer in
                 slots.signal()
+                let gpu = (buffer.gpuEndTime - buffer.gpuStartTime) * 1000
+                Signposts.frame.emitEvent("gpu", "\(gpu, format: .fixed(precision: 2)) ms")
                 if buffer.status == .error {
                     Task { @MainActor [weak self] in
                         self?.failed = true
