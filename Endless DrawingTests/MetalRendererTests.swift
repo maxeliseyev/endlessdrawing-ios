@@ -55,6 +55,31 @@ struct MetalRendererTests {
         #expect(stride(from: 0, to: spray.count, by: 4).allSatisfy { spray[$0] >= 143 })
     }
 
+    /// Mixed brushes, opacities, overlaps and a preview: single-pass ink must equal the legacy two-pass path.
+    @Test func singlePassInkMatchesLegacyTwoPassOutput() throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let fast = try MetalRenderer(device: device)
+        print("RENDER singlePassInk=\(fast.usesSinglePassInk) \(fast.singlePassUnavailableReason ?? "")")
+        guard fast.usesSinglePassInk else { return } // no framebuffer fetch: legacy path is the only path
+        let legacy = try MetalRenderer(device: device, singlePassInk: false)
+        #expect(!legacy.usesSinglePassInk)
+        var camera = Camera()
+        camera.zoom(to: 0.08, anchor: WorldPoint(x: 64, y: 64), viewport: CanvasSize(width: 128, height: 128))
+        let scene = RenderPerformanceTests.scene(count: 80)
+        for renderer in [fast, legacy] {
+            renderer.camera = camera
+            renderer.strokes = try scene.dropLast().map { try renderer.upload(#require(BrushGeometry.prepare($0))) }
+            renderer.preview = try renderer.upload(#require(BrushGeometry.prepare(scene[scene.count - 1])))
+        }
+        let a = try readFrame(fast), b = try readFrame(legacy)
+        // Single-pass composites each MSAA sample over its own background; legacy composites resolved
+        // coverage over the resolved canvas. They legitimately differ only where edges of different
+        // strokes share a pixel (measured ≤0.12% of channels on Apple M4); a broken pass differs broadly.
+        let differences = zip(a, b).map { abs(Int($0) - Int($1)) }
+        #expect(differences.filter { $0 > 1 }.count <= a.count / 400)
+        #expect(a.contains { $0 < 200 }) // the scene actually drew ink
+    }
+
     @Test func emptyCanvasIsWhite() throws {
         let pixels = try render([])
         #expect(pixels.allSatisfy { $0 == 255 })
