@@ -6,7 +6,11 @@ import SwiftUI
 final class CanvasModel {
     enum Command { case undo, resetCamera, retry }
 
-    var style = BrushStyle()
+    var style = BrushStyle() {
+        didSet { if oldValue.brush != style.brush { previousBrush = oldValue.brush } }
+    }
+    /// For the Pencil "switch to previous tool" preference: the brush shape used before the current one.
+    @ObservationIgnored private(set) var previousBrush: BrushKind?
     var paletteAnchor: CGPoint?
     var failure: String?
     var canUndo = false
@@ -41,6 +45,11 @@ final class CanvasModel {
     }
 
     var isShared: Bool { environment != nil }
+
+    func switchToPreviousBrush() {
+        guard let previousBrush else { return }
+        style.brush = previousBrush // didSet records the current shape as the next "previous"
+    }
     var canDraw: Bool {
         !isShared || (storageReady && !graphicsLimited && worldState?.status != .blocked && worldState?.status != .dense
                       && worldState?.issue != .storage && (worldState?.pendingCount ?? 0) < 64)

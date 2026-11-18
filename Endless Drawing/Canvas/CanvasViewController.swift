@@ -54,6 +54,8 @@ final class CanvasViewController: UIViewController {
     /// The only frame source. Once attached to the layer, MTKView must never take a drawable itself
     /// (`-nextDrawable should not be called when using CAMetalDisplayLink`), so MTKView never draws.
     /// Runs continuously during gestures; otherwise wakes for requested frames and pauses again.
+    /// Last Pencil contact in surface coordinates: palette anchor when a tap/squeeze has no hover pose.
+    private var lastPencilPoint: CGPoint?
     private var displayLink: CAMetalDisplayLink?
     private var frameLoopRunning = false
     private var frameRequested = false
@@ -95,7 +97,11 @@ final class CanvasViewController: UIViewController {
         model.onCamera = { [weak self] next in self?.camera = next; self?.requestFrame() }
         let secondaryClick = UITapGestureRecognizer(target: self, action: #selector(secondaryClick(_:)))
         secondaryClick.buttonMaskRequired = .secondary
+        // Mouse/trackpad only: otherwise a quick Pencil tap was recognized here, opened the palette and
+        // cancelled the dot being drawn.
+        secondaryClick.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
         surface.addGestureRecognizer(secondaryClick)
+        surface.addInteraction(UIPencilInteraction(delegate: self))
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -152,6 +158,7 @@ final class CanvasViewController: UIViewController {
         super.viewDidLayoutSubviews()
         if previousSize != surface.bounds.size {
             cancelGesture()
+            lastPencilPoint = nil // stale after resize/rotation
             previousSize = surface.bounds.size
             requestFrame()
         }
@@ -189,6 +196,7 @@ final class CanvasViewController: UIViewController {
             longPress?.cancel()
             navigation.blockUntilTouchesEnd()
             pencilID = ObjectIdentifier(touch)
+            lastPencilPoint = touch.location(in: surface)
             input.begin(at: world(touch), timestamp: touch.timestamp, style: model.style)
             updatePreview()
         }
@@ -211,6 +219,7 @@ final class CanvasViewController: UIViewController {
                     input.appendReal(world(sample), timestamp: sample.timestamp)
                 }
                 input.replacePredictions((event?.predictedTouches(for: touch) ?? []).map(world))
+                lastPencilPoint = touch.location(in: surface)
                 updatePreview()
             } else if let id = fingerIDs[ObjectIdentifier(touch)] {
                 let point = screen(touch)
@@ -674,5 +683,30 @@ extension CanvasViewController: @preconcurrency CAMetalDisplayLinkDelegate {
         let rendered = renderer.draw(update, viewport: CanvasSize(width: surface.bounds.width, height: surface.bounds.height))
         if !rendered { frameRequested = true }
         scheduleAfterFrame(rendered: rendered)
+    }
+}
+
+/// Apple Pencil tap (2nd gen / Pro) and squeeze (Pro), following the user's preferred actions (architecture §5).
+extension CanvasViewController: UIPencilInteractionDelegate {
+    func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveTap tap: UIPencilInteraction.Tap) {
+        performPencil(PencilCommand.resolve(UIPencilInteraction.preferredTapAction), at: tap.hoverPose?.location)
+    }
+
+    func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
+        performPencil(PencilCommand.squeeze(UIPencilInteraction.preferredSqueezeAction, phase: squeeze.phase),
+                at: squeeze.hoverPose?.location)
+    }
+
+    func performPencil(_ command: PencilCommand, at hover: CGPoint?) {
+        switch command {
+        case .none: return
+        case .switchPrevious:
+            cancelGesture() // a draft never changes style mid-stroke
+            model.switchToPreviousBrush()
+        case .togglePalette:
+            if model.paletteAnchor != nil { model.paletteAnchor = nil; return }
+            // Anchor: hover pose → last Pencil contact → centre (clamped on screen by ContentView).
+            showTools(at: hover ?? lastPencilPoint)
+        }
     }
 }

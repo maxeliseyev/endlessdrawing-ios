@@ -151,6 +151,8 @@ paletteOpen(anchor)
 
 ## 5. Pencil Pro и доступ к инструментам
 
+Статус (18.11.2026): реализованы tap и squeeze через `PencilCommand` (`Input/PencilActions.swift`): switchPrevious — предыдущая форма кисти; showColorPalette, showInkAttributes и showContextualPalette открывают или закрывают всю палитру. Палитра привязывается к hover pose, иначе к последнему касанию пером, иначе к центру. switchEraser — no-op, пока нет ластика; runSystemShortcut, ignore и неизвестные значения — no-op. Hover preview ещё не реализован. Secondary click принимает только `indirectPointer`: раньше короткий тап пером открывал палитру и отменял точку.
+
 На canvas устанавливается `UIPencilInteraction`. Используются современные delegate callbacks `pencilInteraction(_:didReceiveTap:)` и `pencilInteraction(_:didReceiveSqueeze:)`, доступные с iPadOS 17.5, то есть ниже текущего deployment target.
 
 ### Предпочитаемые действия
