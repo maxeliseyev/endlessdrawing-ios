@@ -91,6 +91,16 @@
         }
       }
     },
+    "Custom color" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Свой цвет"
+          }
+        }
+      }
+    },
     "Drawing storage could not be opened. Your existing identity and pending drawings have not been replaced." : {
       "localizations" : {
         "ru" : {
@@ -207,6 +217,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Очередь заполнена. Подождите или отмените штрих."
+          }
+        }
+      }
+    },
+    "Recent colors" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недавние цвета"
           }
         }
       }
