@@ -49,9 +49,11 @@ nonisolated enum TilePlan {
         let settleIn: TimeInterval?
         /// Visible tiles, nearest to the centre first.
         let needed: [Key]
-        /// One-tile ring around the visible ones for idle prefetch, nearest first.
-        let ring: [Key]
         let clock: ZoomClock
+        fileprivate let visible: Rect
+        /// One-tile ring around the visible ones for idle prefetch, nearest first. Computed on demand:
+        /// it is only needed once zoom has settled and every visible tile is ready.
+        var ring: [Key] { TilePlan.covering(visible, scale: scale, margin: 1) }
     }
 
     /// Smallest √2 power ≥ zoom, or zoom itself when it already is one.
@@ -91,8 +93,8 @@ nonisolated enum TilePlan {
         let visible = Rect(minX: view.origin.x, minY: view.origin.y,
                            maxX: view.origin.x + Double(width) / exact, maxY: view.origin.y + Double(height) / exact)
         return Frame(view: view, exact: exact, scale: scale, settleIn: wait > 0 ? wait : nil,
-                     needed: covering(visible, scale: scale, margin: 0), ring: covering(visible, scale: scale, margin: 1),
-                     clock: ZoomClock(zoom: camera.zoom, zoomedAt: zoomedAt))
+                     needed: covering(visible, scale: scale, margin: 0),
+                     clock: ZoomClock(zoom: camera.zoom, zoomedAt: zoomedAt), visible: visible)
     }
 
     /// Destination rectangle of a tile in the drawable, in whole backing pixels; shared edges coincide.
@@ -108,9 +110,18 @@ nonisolated enum TilePlan {
         let x0 = Int64((view.minX / world).rounded(.down)) - margin, x1 = Int64((view.maxX / world).rounded(.down)) + margin
         let y0 = Int64((view.minY / world).rounded(.down)) - margin, y1 = Int64((view.maxY / world).rounded(.down)) + margin
         let cx = (view.minX + view.maxX) / 2 / world - 0.5, cy = (view.minY + view.maxY) / 2 / world - 0.5
-        var keys: [Key] = []
-        for ty in y0...y1 { for tx in x0...x1 { keys.append(Key(scale: scale, tx: tx, ty: ty)) } }
-        return keys.sorted { hypot(Double($0.tx) - cx, Double($0.ty) - cy) < hypot(Double($1.tx) - cx, Double($1.ty) - cy) }
+        // Distance computed once per tile (per-comparison hypot dominated main-thread time on iPad).
+        var keys: [(key: Key, distance: Double)] = []
+        keys.reserveCapacity(Int((x1 - x0 + 1) * (y1 - y0 + 1)))
+        for ty in y0...y1 {
+            let dy = Double(ty) - cy
+            for tx in x0...x1 {
+                let dx = Double(tx) - cx
+                keys.append((Key(scale: scale, tx: tx, ty: ty), dx * dx + dy * dy))
+            }
+        }
+        keys.sort { $0.distance < $1.distance }
+        return keys.map(\.key)
     }
 }
 

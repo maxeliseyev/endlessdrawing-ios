@@ -89,6 +89,20 @@ struct TileRenderTests {
         #expect(removed == (try frame(reference)))
     }
 
+    @Test func appendedTailWithOlderSequenceRebuildsInsteadOfDrawingOnTop() throws {
+        let r = try renderer()
+        let a = try stroke(r, [WorldPoint(x: -40, y: 0), WorldPoint(x: 40, y: 0)], sequence: 5)
+        let b = try stroke(r, [WorldPoint(x: 0, y: -40), WorldPoint(x: 0, y: 40)], opacity: 1, color: .palette[1], sequence: 9)
+        let older = try stroke(r, [WorldPoint(x: -30, y: -30), WorldPoint(x: 30, y: 30)], opacity: 1, color: .palette[2], sequence: 7)
+        r.strokes = [a, b]
+        _ = try frame(r)
+        r.strokes = [a, b, older] // prefix unchanged, but the tail is older than b
+        let got = try frame(r)
+        let fresh = try renderer()
+        fresh.strokes = [a, older, b]
+        #expect(got == (try frame(fresh)))
+    }
+
     @Test func strokeAcrossTileCornerHasNoSeam() throws {
         // Tile edges at world 0 and the camera centre at the origin: the stroke crosses four tiles.
         let r = try renderer()

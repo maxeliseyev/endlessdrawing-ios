@@ -352,6 +352,23 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     // MARK: - Scene changes → tile invalidation
 
     private func sceneChanged(from old: [GPUStroke]) {
+        // Common case on the network path: same scene with newer strokes appended (or nothing changed).
+        // Compare the prefix in order and only process the tail, without rebuilding the id map.
+        if strokes.count >= old.count,
+           zip(old, strokes).allSatisfy({ $0.id == $1.id && $0.sequence == $1.sequence && $0.sameGeometry(as: $1) }),
+           Set(strokes[old.count...].map(\.id)).isDisjoint(with: byID.keys) {
+            var lastKey = old.last.flatMap { orderKeys[$0.id] } ?? Int64.min
+            var ordered = true
+            for stroke in strokes[old.count...] {
+                byID[stroke.id] = stroke
+                let key = orderKey(for: stroke)
+                if key <= lastKey { ordered = false }
+                lastKey = key
+                added(stroke, key: key)
+            }
+            if !ordered { for tile in tiles.values { tile.spoiled = true; tile.appends.removeAll() } }
+            return
+        }
         let previous = byID
         var current: [UUID: GPUStroke] = [:]
         current.reserveCapacity(strokes.count)
@@ -365,24 +382,33 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         }
         var lastKey = Int64.min, ordered = true
         for stroke in strokes {
-            let key: Int64
-            if stroke.sequence > 0 { key = stroke.sequence }
-            else if let known = orderKeys[stroke.id] { key = known }
-            else { nextLocalKey += 1; key = nextLocalKey }
-            orderKeys[stroke.id] = key
+            let key = orderKey(for: stroke)
             if key <= lastKey { ordered = false }
             lastKey = key
             if let before = previous[stroke.id], before.sameGeometry(as: stroke) { continue }
-            index.insert(stroke.id, extent: stroke.extent)
-            for tile in tiles.values where !tile.spoiled && tile.bounds.intersects(stroke.extent) {
-                // Only a stroke above everything already in the tile can be drawn on top of it.
-                if key > tile.maxKey, tile.appends.count < Self.maxAppends { tile.appends.append(stroke.id) }
-                else { tile.spoiled = true; tile.appends.removeAll() }
-            }
+            added(stroke, key: key)
         }
         if !ordered {
             // Callers pass seq order; anything else rebuilds instead of trusting stale order.
             for tile in tiles.values { tile.spoiled = true; tile.appends.removeAll() }
+        }
+    }
+
+    private func orderKey(for stroke: GPUStroke) -> Int64 {
+        let key: Int64
+        if stroke.sequence > 0 { key = stroke.sequence }
+        else if let known = orderKeys[stroke.id] { key = known }
+        else { nextLocalKey += 1; key = nextLocalKey }
+        orderKeys[stroke.id] = key
+        return key
+    }
+
+    private func added(_ stroke: GPUStroke, key: Int64) {
+        index.insert(stroke.id, extent: stroke.extent)
+        for tile in tiles.values where !tile.spoiled && tile.bounds.intersects(stroke.extent) {
+            // Only a stroke above everything already in the tile can be drawn on top of it.
+            if key > tile.maxKey, tile.appends.count < Self.maxAppends { tile.appends.append(stroke.id) }
+            else { tile.spoiled = true; tile.appends.removeAll() }
         }
     }
 
