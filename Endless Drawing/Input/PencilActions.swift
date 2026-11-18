@@ -13,8 +13,9 @@ nonisolated enum PencilCommand: Equatable, Sendable {
         switch action {
         case .switchPrevious: .switchPrevious
         case .showColorPalette, .showInkAttributes, .showContextualPalette: .togglePalette
-        // No eraser tool yet: do nothing rather than silently changing the brush.
-        case .switchEraser: .none
+        // No eraser tool yet. "Switch to eraser" is the system default for squeeze, and doing nothing made
+        // squeeze look broken on device: open the brush palette instead until an eraser exists.
+        case .switchEraser: .togglePalette
         // The system runs the user's shortcut itself; never duplicate it.
         case .ignore, .runSystemShortcut: .none
         @unknown default: .none // future actions are a safe no-op
