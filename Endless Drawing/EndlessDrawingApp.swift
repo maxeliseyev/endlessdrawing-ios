@@ -1,6 +1,6 @@
 //
-//  Endless_drawingApp.swift
-//  Endless drawing
+//  EndlessDrawingApp.swift
+//  Endless Drawing
 //
 //  Created by Maxim Eliseyev on 18.11.2026.
 //
@@ -9,7 +9,7 @@ import SwiftUI
 import SwiftData
 
 @main
-struct Endless_drawingApp: App {
+struct EndlessDrawingApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Item.self,
