@@ -259,6 +259,24 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             requestFrame(in: view, after: 1.0 / 120)
             return
         }
+        submit(drawable, viewport: CanvasSize(width: view.bounds.width, height: view.bounds.height), mode: "demand")
+        // Zoom settling and budgeted tile builds continue on later frames even when input is idle.
+        if !failed, let delay = nextFrameDelay { requestFrame(in: view, after: max(delay, 1.0 / 120)) }
+    }
+
+    /// Gesture frames from CAMetalDisplayLink: the drawable arrives with the update, so the main thread
+    /// never blocks in `currentDrawable` (on iPad that wait was ~7 ms per frame, one frame of latency).
+    func draw(_ update: CAMetalDisplayLink.Update, viewport: CanvasSize) {
+        guard isRenderingEnabled, !failed, viewport.isValid else { return }
+        guard slots.wait(timeout: .now()) == .success else {
+            Signposts.frame.emitEvent("skip", "slots")
+            return // the link calls again next frame
+        }
+        submit(update.drawable, viewport: viewport, mode: "link")
+    }
+
+    /// Encodes and presents one frame; owns one in-flight slot that the completion handler releases.
+    private func submit(_ drawable: CAMetalDrawable, viewport: CanvasSize, mode: StaticString) {
         guard let command = queue.makeCommandBuffer() else {
             slots.signal()
             failed = true
@@ -266,10 +284,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             return
         }
         do {
-            let interval = Signposts.frame.beginInterval("encode", "\(view.isPaused ? "demand" : "loop", privacy: .public)")
-            try encode(to: drawable.texture,
-                       viewport: CanvasSize(width: view.bounds.width, height: view.bounds.height),
-                       command: command)
+            let interval = Signposts.frame.beginInterval("encode", "\(String(describing: mode), privacy: .public)")
+            try encode(to: drawable.texture, viewport: viewport, command: command)
             Signposts.frame.endInterval("encode", interval)
             let slots = slots
             command.addCompletedHandler { [weak self] buffer in
@@ -285,8 +301,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             }
             command.present(drawable)
             command.commit()
-            // Zoom settling and budgeted tile builds continue on later frames even when input is idle.
-            if let delay = nextFrameDelay { requestFrame(in: view, after: max(delay, 1.0 / 120)) }
         } catch {
             slots.signal()
             failed = true

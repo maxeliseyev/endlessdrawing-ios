@@ -8,7 +8,7 @@ mkdir -p "$OUT"
 xcrun -sdk macosx metal -c "$S/Rendering/Shaders.metal" -o "$OUT/shaders.air"
 xcrun -sdk macosx metallib "$OUT/shaders.air" -o "$OUT/default.metallib"
 # UIKit/AppKit differ in one MTKView call; the app source stays iOS-only.
-sed 's/view?.setNeedsDisplay()/view?.needsDisplay = true/' "$S/Rendering/MetalRenderer.swift" > "$OUT/MetalRenderer.mac.swift"
+sed -E 's/view(\?)?\.setNeedsDisplay\(\)/view\1.needsDisplay = true/' "$S/Rendering/MetalRenderer.swift" > "$OUT/MetalRenderer.mac.swift"
 xcrun -sdk macosx swiftc -O -swift-version 6 -default-isolation MainActor -o "$OUT/harness" \
   "$ROOT/tools/render-harness/main.swift" "$S"/Domain/*.swift "$OUT/MetalRenderer.mac.swift" \
   "$S/Rendering/RoundGeometry.swift" "$S/Rendering/BrushGeometry.swift" "$S/Rendering/RenderSignposts.swift" "$S/Rendering/TilePlan.swift" \
