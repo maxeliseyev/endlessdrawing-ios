@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 import CoreGraphics
 import QuartzCore
 
-func scene(count: Int, seed: UInt64 = 7, spread: Double = 1600, offset: Double = 0) -> [LocalStroke] {
+func scene(count: Int, seed: UInt64 = 7, spread: Double = 1600, offset: Double = 0, aspect: Double = 0.7) -> [LocalStroke] {
     var state = seed
     func next() -> Double {
         state &+= 0x9E37_79B9_7F4A_7C15
@@ -23,7 +23,7 @@ func scene(count: Int, seed: UInt64 = 7, spread: Double = 1600, offset: Double =
         style.width = 4 + next() * 20
         style.opacity = next() < 0.3 ? 0.5 : 1
         style.color = InkColor.palette[index % InkColor.palette.count]
-        var x = offset + (next() - 0.5) * spread, y = -offset + (next() - 0.5) * spread * 0.7
+        var x = offset + (next() - 0.5) * spread, y = -offset + (next() - 0.5) * spread * aspect
         var angle = next() * .pi * 2
         let points = (0..<64).map { _ -> WorldPoint in
             angle += (next() - 0.5) * 0.6
@@ -181,6 +181,24 @@ MainActor.assumeIsolated {
             let row = stride(from: 40, to: 90, by: 4).map { String(p[(64 * 128 + $0) * 4]) }.joined(separator: " ")
             print("PROBE \(single ? "single" : "legacy") \(label): \(row)")
         }
+    }
+    // Exactly MetalRendererTests.singlePassInkMatchesLegacyTwoPassOutput (128 px, zoom 0.08, 80 strokes).
+    for seed: UInt64 in [7, 8, 9] {
+        let v = CanvasSize(width: 128, height: 128)
+        var camera = Camera()
+        camera.zoom(to: 0.08, anchor: WorldPoint(x: 64, y: 64), viewport: v)
+        let strokes = scene(count: 80, seed: seed, aspect: 1100.0 / 1600)
+        var out: [[UInt8]] = []
+        for single in [true, false] {
+            let r = try! MetalRenderer(device: device, singlePassInk: single)
+            r.camera = camera
+            r.strokes = strokes.dropLast().map { try! r.upload(BrushGeometry.prepare($0)!) }
+            r.preview = try! r.upload(BrushGeometry.prepare(strokes.last!)!)
+            let t = target(device, 128, 128, shared: true)
+            _ = frame(r, t, v); out.append(pixels(t))
+        }
+        let diff = zip(out[0], out[1]).map { abs(Int($0) - Int($1)) }
+        print("UNIT seed=\(seed) (MetalRendererTests scene) >1:\(diff.filter { $0 > 1 }.count)/\(diff.count) max=\(diff.max()!) inkedPixels=\(stride(from: 0, to: out[1].count, by: 4).filter { out[1][$0] < 250 }.count)")
     }
     let ok = equivalence(device) && tileTransitions(device)
     bench(device, single: false)

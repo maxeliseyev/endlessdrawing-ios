@@ -74,10 +74,14 @@ struct MetalRendererTests {
         let a = try readFrame(fast), b = try readFrame(legacy)
         // Single-pass composites each MSAA sample over its own background; legacy composites resolved
         // coverage over the resolved canvas. They legitimately differ only where edges of different
-        // strokes share a pixel (measured ≤0.12% of channels on Apple M4); a broken pass differs broadly.
+        // strokes share a pixel. In this dense 8% scene almost every inked pixel is an edge: iPad and
+        // Apple M4 both measure 2.3–2.8% of inked channels, max 43. The broken reset-in-composite pass
+        // differed on over half of all channels with max 168.
         let differences = zip(a, b).map { abs(Int($0) - Int($1)) }
-        #expect(differences.filter { $0 > 1 }.count <= a.count / 400)
-        #expect(a.contains { $0 < 200 }) // the scene actually drew ink
+        let inkedChannels = stride(from: 0, to: b.count, by: 4).filter { b[$0] < 250 }.count * 4
+        #expect(inkedChannels > 0) // the scene actually drew ink
+        #expect(differences.filter { $0 > 1 }.count * 20 <= inkedChannels)
+        #expect(differences.max() ?? 0 <= 64)
     }
 
     @Test func emptyCanvasIsWhite() throws {
