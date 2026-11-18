@@ -169,3 +169,11 @@ iPad Pro 11" (M4), Release, `b2fda3a` + метки пропусков, 43 с, с
   - В 1732 из 2729 кадров `currentDrawable` ждал >1 мс, p50 7 мс, p95 8 мс, max 21 мс. Главный поток каждый кадр жеста стоял до следующего vsync — это лишний кадр задержки пера.
   - Кадры жеста (display link MTKView) начинались через два vsync в 3.4% случаев, кадры по запросу (покой, догрузка) — в 70.8%. Последнее на плавность жестов не влияет.
 - Исправление: во время жеста кадры ведёт `CAMetalDisplayLink` (iOS 17+, `preferredFrameLatency = 1`, 60–120 Гц). Drawable приходит вместе с update, главный поток не блокируется. В покое по-прежнему MTKView по запросу. На устройстве ещё не измерено — в симуляторе жесты недоступны.
+
+### Падение при zoom out (исправлено)
+
+`a71b0c9` смешивал источники кадров: жесты шли через `CAMetalDisplayLink`, а кадры по запросу — через `MTKView.currentDrawable`. С link на слое любой `nextDrawable` — `CAMetalLayerInvalidOperation`, поэтому первый кадр после жеста (конец pinch) ронял приложение.
+
+Теперь `CAMetalDisplayLink` — единственный источник кадров. Во время жеста он работает каждый vsync. В покое просыпается по запросу (`requestFrame`), для догрузки тайлов и zoom settle — через `nextFrameDelay`. MTKView никогда не рисует (`draw(in:)` пустой), `enableSetNeedsDisplay = false`.
+
+Регрессионный тест `framesComeOnlyFromTheDisplayLinkInAWindow` (`MetalRendererTests`). В симуляторе: кадры `encode: link`, в покое link на паузе.

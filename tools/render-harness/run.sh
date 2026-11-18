@@ -13,4 +13,4 @@ xcrun -sdk macosx swiftc -O -swift-version 6 -default-isolation MainActor -o "$O
   "$ROOT/tools/render-harness/main.swift" "$S"/Domain/*.swift "$OUT/MetalRenderer.mac.swift" \
   "$S/Rendering/RoundGeometry.swift" "$S/Rendering/BrushGeometry.swift" "$S/Rendering/RenderSignposts.swift" "$S/Rendering/TilePlan.swift" \
   "$S/Networking/WireProtocol.swift" "$S/Networking/DrawingEnvironment.swift" "$S/Persistence/IdentityStore.swift"
-cd "$OUT" && ./harness
+cd "$OUT" && ./harness "$@"

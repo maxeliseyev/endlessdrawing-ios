@@ -143,6 +143,28 @@ func png(_ bgra: [UInt8], _ w: Int, _ name: String) {
     return ok && r.tileStats.built == built
 }
 
+/// Pinch-out stress: zoom 4 → 0.08 one small step per 8 ms frame (never settled), then settle.
+@MainActor func zoomOutStress(_ device: MTLDevice) {
+    let v = CanvasSize(width: 1210, height: 834)
+    let r = try! MetalRenderer(device: device)
+    var now = 0.0
+    r.clock = { now }
+    r.strokes = scene(count: 3000, spread: 30000).map { try! r.upload(BrushGeometry.prepare($0)!) }
+    let t = target(device, 2420, 1668, shared: false)
+    r.camera.zoom(to: 4, anchor: WorldPoint(x: 605, y: 417), viewport: v)
+    _ = frame(r, t, v)
+    var frames = 0, worst = 0.0
+    while r.camera.zoom > 0.0801 {
+        r.camera.zoom(to: max(0.08, r.camera.zoom * 0.97), anchor: WorldPoint(x: 605, y: 417), viewport: v)
+        now += 0.008
+        let f = frame(r, t, v); frames += 1; worst = max(worst, f.0)
+        if frames % 20 == 0 { print(String(format: "ZOOM %.3f frame %.1f ms resident %d built %d", r.camera.zoom, f.0, r.tileStats.resident, r.tileStats.built)) }
+    }
+    now += 1
+    let settled = frame(r, t, v)
+    print(String(format: "ZOOM done frames %d worst %.1f ms settled %.1f ms resident %d built %d", frames, worst, settled.0, r.tileStats.resident, r.tileStats.built))
+}
+
 @MainActor func bench(_ device: MTLDevice, single: Bool) {
     let v = CanvasSize(width: 1210, height: 834)
     func ms(_ f: (Double, Double, Double)) -> String { String(format: "%.2f(cpu %.2f/gpu %.2f)", f.0, f.1, f.2) }
@@ -200,6 +222,7 @@ MainActor.assumeIsolated {
         let diff = zip(out[0], out[1]).map { abs(Int($0) - Int($1)) }
         print("UNIT seed=\(seed) (MetalRendererTests scene) >1:\(diff.filter { $0 > 1 }.count)/\(diff.count) max=\(diff.max()!) inkedPixels=\(stride(from: 0, to: out[1].count, by: 4).filter { out[1][$0] < 250 }.count)")
     }
+    if CommandLine.arguments.contains("--zoom-out") { zoomOutStress(device); exit(0) }
     let ok = equivalence(device) && tileTransitions(device)
     bench(device, single: false)
     bench(device, single: true)

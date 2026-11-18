@@ -51,9 +51,13 @@ final class CanvasViewController: UIViewController {
     private var activeObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
     private var memoryObserver: NSObjectProtocol?
-    /// Gesture frame loop. Delivers a drawable with each update instead of blocking in currentDrawable.
+    /// The only frame source. Once attached to the layer, MTKView must never take a drawable itself
+    /// (`-nextDrawable should not be called when using CAMetalDisplayLink`), so MTKView never draws.
+    /// Runs continuously during gestures; otherwise wakes for requested frames and pauses again.
     private var displayLink: CAMetalDisplayLink?
     private var frameLoopRunning = false
+    private var frameRequested = false
+    private var delayedFrame: DispatchWorkItem?
 
     init(model: CanvasModel) {
         self.model = model
@@ -72,7 +76,7 @@ final class CanvasViewController: UIViewController {
         surface.clearColor = MTLClearColorMake(1, 1, 1, 1)
         surface.framebufferOnly = true
         surface.isPaused = true
-        surface.enableSetNeedsDisplay = true
+        surface.enableSetNeedsDisplay = false // frames come only from the CAMetalDisplayLink
         surface.preferredFramesPerSecond = 120
         surface.layer.isOpaque = true
         (surface.layer as? CAMetalLayer)?.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
@@ -130,7 +134,8 @@ final class CanvasViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        displayLink?.invalidate(); displayLink = nil; frameLoopRunning = false
+        displayLink?.invalidate(); displayLink = nil; frameLoopRunning = false; frameRequested = false
+        delayedFrame?.cancel(); delayedFrame = nil
         renderer?.isRenderingEnabled = false
         sceneGeometryTask?.cancel()
         cancelGesture()
@@ -350,7 +355,8 @@ final class CanvasViewController: UIViewController {
 
     private func requestFrame() {
         renderer?.camera = camera
-        if !frameLoopRunning { surface?.setNeedsDisplay() } // the running display link draws the next frame anyway
+        frameRequested = true
+        resumeDisplayLink()
         guard model.isShared, viewport.isValid,
               camera != lastViewportCamera || viewport != lastViewportSize else { return }
         lastViewportCamera = camera; lastViewportSize = viewport
@@ -514,31 +520,44 @@ final class CanvasViewController: UIViewController {
         }
     }
 
-    /// Gesture: CAMetalDisplayLink drives frames with one frame of latency and hands over the drawable
-    /// (MTKView's loop blocked the main thread ~7 ms per frame in currentDrawable on iPad). Idle: MTKView
-    /// draws on demand. MTKView's own loop stays paused in both cases.
+    /// Gesture: the display link runs every vsync with one frame of latency. Idle: it wakes for requested
+    /// frames only (see `scheduleAfterFrame`).
     private func updateFrameLoop() {
-        guard let surface else { return }
+        guard surface != nil else { return }
         let navigating = !navigation.blocked && !navigation.touches.isEmpty
         let running = renderer?.isRenderingEnabled == true && (pencilID != nil || navigating)
+        if renderer?.isRenderingEnabled != true { displayLink?.isPaused = true }
         guard running != frameLoopRunning else { return }
         frameLoopRunning = running
-        surface.isPaused = true
-        surface.enableSetNeedsDisplay = !running
-        if running {
-            if displayLink == nil, let layer = surface.layer as? CAMetalLayer {
-                let link = CAMetalDisplayLink(metalLayer: layer)
-                link.delegate = self
-                link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
-                link.preferredFrameLatency = 1
-                link.add(to: .main, forMode: .common)
-                displayLink = link
-            }
-            displayLink?.isPaused = false
-        } else {
-            displayLink?.isPaused = true
-            surface.setNeedsDisplay() // final frame and any pending tile work continue on demand
+        if running { resumeDisplayLink() }
+        else { frameRequested = true; resumeDisplayLink() } // final frame; pending tile work continues on demand
+    }
+
+    private func resumeDisplayLink() {
+        guard renderer?.isRenderingEnabled == true, let surface, surface.window != nil else { return }
+        if displayLink == nil, let layer = surface.layer as? CAMetalLayer {
+            let link = CAMetalDisplayLink(metalLayer: layer)
+            link.delegate = self
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+            link.preferredFrameLatency = 1
+            link.add(to: .main, forMode: .common)
+            displayLink = link
         }
+        delayedFrame?.cancel(); delayedFrame = nil
+        displayLink?.isPaused = false
+    }
+
+    /// After a frame: keep running for gestures and immediate follow-up work, wake later for zoom settling,
+    /// otherwise pause until the next request.
+    private func scheduleAfterFrame(rendered: Bool) {
+        if !rendered { return } // no in-flight slot: the running link retries next vsync
+        if frameLoopRunning || frameRequested { return }
+        guard let delay = renderer?.nextFrameDelay else { displayLink?.isPaused = true; return }
+        if delay <= 1.0 / 120 { return }
+        displayLink?.isPaused = true
+        let work = DispatchWorkItem { [weak self] in self?.delayedFrame = nil; self?.requestFrame() }
+        delayedFrame = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func armLongPress(at point: WorldPoint) {
@@ -594,9 +613,7 @@ final class CanvasViewController: UIViewController {
             let next = try MetalRenderer(device: device)
             next.isRenderingEnabled = viewIfLoaded?.window != nil && UIApplication.shared.applicationState == .active
             next.onFailure = { [weak self] message in
-                self?.surface.isPaused = true
-                self?.surface.enableSetNeedsDisplay = true
-                self?.displayLink?.isPaused = true; self?.frameLoopRunning = false
+                self?.displayLink?.isPaused = true; self?.frameLoopRunning = false; self?.frameRequested = false
                 if self?.model.failure == nil { self?.model.failure = message }
             }
             renderer = next
@@ -651,8 +668,11 @@ private extension PreparedStroke {
 /// The link is added to the main run loop; @preconcurrency verifies at runtime that updates arrive there.
 extension CanvasViewController: @preconcurrency CAMetalDisplayLinkDelegate {
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
-        guard frameLoopRunning, let renderer, let surface else { return }
+        guard let renderer, let surface, renderer.isRenderingEnabled else { link.isPaused = true; return }
+        frameRequested = false
         renderer.camera = camera
-        renderer.draw(update, viewport: CanvasSize(width: surface.bounds.width, height: surface.bounds.height))
+        let rendered = renderer.draw(update, viewport: CanvasSize(width: surface.bounds.width, height: surface.bounds.height))
+        if !rendered { frameRequested = true }
+        scheduleAfterFrame(rendered: rendered)
     }
 }

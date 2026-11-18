@@ -110,6 +110,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     /// Delay until the frame loop must run again (zoom settle, tiles still missing); nil when complete.
     private(set) var nextFrameDelay: TimeInterval?
     private(set) var tileStats = TileStats()
+    /// Frames committed for display (diagnostics and tests).
+    private(set) var presentedFrames = 0
 
     var isRenderingEnabled = true
     var camera = Camera()
@@ -239,40 +241,22 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         legacyCoverage.removeAll()
     }
 
-    func draw(in view: MTKView) {
-        guard isRenderingEnabled, !failed, view.bounds.width > 0, view.bounds.height > 0 else { return }
-        // Never block the input thread waiting for the GPU.
-        // Frame-pacing diagnostics: every lost frame is attributed (all in-flight slots busy, no drawable,
-        // or a slow currentDrawable wait), and each encode says whether the display link drove it.
-        guard slots.wait(timeout: .now()) == .success else {
-            Signposts.frame.emitEvent("skip", "slots")
-            requestFrame(in: view, after: 1.0 / 120)
-            return
-        }
-        let waitStart = CACurrentMediaTime()
-        let next = view.currentDrawable
-        let wait = (CACurrentMediaTime() - waitStart) * 1000
-        if wait > 1 { Signposts.frame.emitEvent("drawableWait", "\(wait, format: .fixed(precision: 2)) ms") }
-        guard let drawable = next else {
-            Signposts.frame.emitEvent("skip", "drawable")
-            slots.signal()
-            requestFrame(in: view, after: 1.0 / 120)
-            return
-        }
-        submit(drawable, viewport: CanvasSize(width: view.bounds.width, height: view.bounds.height), mode: "demand")
-        // Zoom settling and budgeted tile builds continue on later frames even when input is idle.
-        if !failed, let delay = nextFrameDelay { requestFrame(in: view, after: max(delay, 1.0 / 120)) }
-    }
+    /// Never draws: frames come only from the controller's CAMetalDisplayLink, and with a link attached
+    /// to the layer `currentDrawable`/`nextDrawable` raises CAMetalLayerInvalidOperation.
+    func draw(in view: MTKView) {}
 
-    /// Gesture frames from CAMetalDisplayLink: the drawable arrives with the update, so the main thread
-    /// never blocks in `currentDrawable` (on iPad that wait was ~7 ms per frame, one frame of latency).
-    func draw(_ update: CAMetalDisplayLink.Update, viewport: CanvasSize) {
-        guard isRenderingEnabled, !failed, viewport.isValid else { return }
+    /// One frame from CAMetalDisplayLink: the drawable arrives with the update, so the main thread never
+    /// blocks waiting for one (MTKView's loop waited ~7 ms per frame on iPad). False when no in-flight
+    /// slot was free; the caller keeps the link running to retry on the next vsync.
+    @discardableResult
+    func draw(_ update: CAMetalDisplayLink.Update, viewport: CanvasSize) -> Bool {
+        guard isRenderingEnabled, !failed, viewport.isValid else { return true }
         guard slots.wait(timeout: .now()) == .success else {
             Signposts.frame.emitEvent("skip", "slots")
-            return // the link calls again next frame
+            return false
         }
         submit(update.drawable, viewport: viewport, mode: "link")
+        return true
     }
 
     /// Encodes and presents one frame; owns one in-flight slot that the completion handler releases.
@@ -301,17 +285,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             }
             command.present(drawable)
             command.commit()
+            presentedFrames += 1
         } catch {
             slots.signal()
             failed = true
             onFailure?(error.localizedDescription)
-        }
-    }
-
-    private func requestFrame(in view: MTKView, after delay: TimeInterval) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak view] in
-            guard let self, isRenderingEnabled, !failed, let view, view.window != nil, view.isPaused else { return }
-            view.setNeedsDisplay()
         }
     }
 

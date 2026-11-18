@@ -1,5 +1,6 @@
 import MetalKit
 import Testing
+import UIKit
 @testable import Endless_Drawing
 
 @Suite(.serialized)
@@ -249,5 +250,24 @@ struct MetalRendererTests {
         let pixels = try render([[WorldPoint(x: 999_999_990, y: 0)]], camera: camera)
         #expect(abs(channel(pixels, x: 64, y: 64) - 144) <= 1)
         #expect(channel(pixels, x: 80, y: 64) == 255)
+    }
+
+    /// Regression: with a CAMetalDisplayLink attached, MTKView must never take a drawable itself
+    /// (CAMetalLayerInvalidOperation crashed the app after a zoom-out gesture on iPad).
+    @Test func framesComeOnlyFromTheDisplayLinkInAWindow() async throws {
+        let model = CanvasModel()
+        let controller = CanvasViewController(model: model)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        window.rootViewController = controller
+        window.isHidden = false
+        defer { window.isHidden = true }
+        let surface = try #require(controller.view as? MTKView)
+        let renderer = try #require(surface.delegate as? MetalRenderer)
+        #expect(surface.isPaused && !surface.enableSetNeedsDisplay)
+        renderer.draw(in: surface) // must be a no-op, never touching currentDrawable
+        #expect(renderer.presentedFrames == 0)
+        model.onCamera?(Camera()) // any frame request
+        for _ in 0..<100 where renderer.presentedFrames == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(renderer.presentedFrames > 0)
     }
 }
