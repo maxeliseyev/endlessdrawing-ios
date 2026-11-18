@@ -93,3 +93,28 @@ fragment InkOutput copyCanvasInk(QuadVarying in [[stage_in]], texture2d<float> c
     constexpr sampler sample(filter::nearest, address::clamp_to_edge);
     return { canvas.sample(sample, in.uv), 0.0f };
 }
+
+// Raster tiles: a textured rect in NDC; nearest at the exact scale (1:1 whole pixels), linear while zooming.
+struct TileVarying { float4 position [[position]]; float2 uv; };
+
+vertex TileVarying tileQuad(uint id [[vertex_id]], constant float4 &rect [[buffer(0)]]) {
+    constexpr float2 corners[] = { {0,0}, {1,0}, {0,1}, {0,1}, {1,0}, {1,1} };
+    float2 corner = corners[id];
+    return { float4(mix(rect.xy, rect.zw, corner), 0, 1), corner };
+}
+
+static float4 sampleTile(TileVarying in, texture2d<float> tile, uint linear) {
+    constexpr sampler nearest(filter::nearest, address::clamp_to_edge);
+    constexpr sampler smooth(filter::linear, address::clamp_to_edge);
+    return linear != 0 ? tile.sample(smooth, in.uv) : tile.sample(nearest, in.uv);
+}
+
+fragment float4 tileCopy(TileVarying in [[stage_in]], texture2d<float> tile [[texture(0)]],
+                         constant uint &linear [[buffer(0)]]) {
+    return sampleTile(in, tile, linear);
+}
+
+fragment InkOutput tileCopyInk(TileVarying in [[stage_in]], texture2d<float> tile [[texture(0)]],
+                               constant uint &linear [[buffer(0)]]) {
+    return { sampleTile(in, tile, linear), 0.0f };
+}

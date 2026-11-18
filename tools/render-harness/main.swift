@@ -109,20 +109,61 @@ func png(_ bgra: [UInt8], _ w: Int, _ name: String) {
     return ok
 }
 
+/// Tile cache transitions on the single-pass path must equal a fresh render of the final scene.
+@MainActor func tileTransitions(_ device: MTLDevice) -> Bool {
+    let v = CanvasSize(width: 256, height: 256)
+    func stroke(_ r: MetalRenderer, _ points: [WorldPoint], _ color: Int, _ seq: Int64) -> MetalRenderer.GPUStroke {
+        var style = BrushStyle(); style.width = 12; style.opacity = 0.5; style.color = InkColor.palette[color]
+        var g = try! r.upload(BrushGeometry.prepare(LocalStroke(id: UUID(), points: points, style: style))!)
+        g.sequence = seq; return g
+    }
+    func render(_ r: MetalRenderer) -> [UInt8] { let t = target(device, 512, 512, shared: true); _ = frame(r, t, v); return pixels(t) }
+    let r = try! MetalRenderer(device: device)
+    let a = stroke(r, [WorldPoint(x: -60, y: 0), WorldPoint(x: 60, y: 0)], 0, 5)
+    let b = stroke(r, [WorldPoint(x: 0, y: -60), WorldPoint(x: 0, y: 60)], 1, 9)
+    let late = stroke(r, [WorldPoint(x: -50, y: -50), WorldPoint(x: 50, y: 50)], 2, 7)
+    var ok = true
+    func check(_ name: String, _ scene: [MetalRenderer.GPUStroke], _ expectAppend: Bool = false) {
+        let appendedBefore = r.tileStats.appended
+        r.strokes = scene
+        let got = render(r)
+        let fresh = try! MetalRenderer(device: device); fresh.strokes = scene
+        let pass = got == render(fresh) && (!expectAppend || r.tileStats.appended > appendedBefore)
+        ok = ok && pass
+        print("TILES \(name) \(pass ? "OK" : "FAIL")")
+    }
+    check("initial", [a])
+    check("append", [a, b], true)
+    check("olderInsert", [a, late, b])
+    check("remove", [a, b])
+    for _ in 0..<5 { r.camera.pan(screenDelta: WorldPoint(x: 37, y: -11)); _ = render(r) }
+    let built = r.tileStats.built
+    r.camera.pan(screenDelta: WorldPoint(x: 3, y: 2)); _ = render(r)
+    print("TILES panReuse \(r.tileStats.built == built ? "OK" : "FAIL")")
+    return ok && r.tileStats.built == built
+}
+
 @MainActor func bench(_ device: MTLDevice, single: Bool) {
     let v = CanvasSize(width: 1210, height: 834)
+    func ms(_ f: (Double, Double, Double)) -> String { String(format: "%.2f(cpu %.2f/gpu %.2f)", f.0, f.1, f.2) }
     for count in [250, 1000, 2000] {
         let r = try! MetalRenderer(device: device, singlePassInk: single)
         r.strokes = scene(count: count).map { try! r.upload(BrushGeometry.prepare($0)!) }
         let t = target(device, 2420, 1668, shared: false)
-        _ = frame(r, t, v)
-        var sum = (0.0, 0.0, 0.0)
-        for _ in 0..<20 {
-            r.camera.pan(screenDelta: WorldPoint(x: 10, y: 0))
-            let f = frame(r, t, v); sum = (sum.0 + f.0, sum.1 + f.1, sum.2 + f.2)
+        let first = frame(r, t, v)
+        var idle = frame(r, t, v)
+        for _ in 0..<20 { idle = frame(r, t, v) } // let ring prefetch finish
+        func average(_ n: Int, _ change: () -> Void) -> (Double, Double, Double) {
+            var sum = (0.0, 0.0, 0.0)
+            for _ in 0..<n { change(); let f = frame(r, t, v); sum = (sum.0 + f.0, sum.1 + f.1, sum.2 + f.2) }
+            return (sum.0 / Double(n), sum.1 / Double(n), sum.2 / Double(n))
         }
-        print(String(format: "BENCH %@ n=%d pan=%.2f (cpu %.2f / gpu %.2f) ms/frame", single ? "single" : "legacy", count,
-                     sum.0 / 20, sum.1 / 20, sum.2 / 20))
+        let pan = average(20) { r.camera.pan(screenDelta: WorldPoint(x: 10, y: 0)) }
+        let zoom = average(10) { r.camera.zoom(to: r.camera.zoom * 1.02, anchor: WorldPoint(x: 605, y: 417), viewport: v) }
+        let extra = try! r.upload(BrushGeometry.prepare(scene(count: 1, seed: 99)[0])!)
+        let add = average(1) { r.strokes.append(extra) }
+        let remove = average(1) { r.strokes.remove(at: count / 2) }
+        print("BENCH \(single ? "single" : "legacy") n=\(count) first=\(ms(first)) idle=\(ms(idle)) pan=\(ms(pan)) zoom=\(ms(zoom)) add=\(ms(add)) remove=\(ms(remove))")
     }
 }
 
@@ -141,7 +182,7 @@ MainActor.assumeIsolated {
             print("PROBE \(single ? "single" : "legacy") \(label): \(row)")
         }
     }
-    let ok = equivalence(device)
+    let ok = equivalence(device) && tileTransitions(device)
     bench(device, single: false)
     bench(device, single: true)
     exit(ok ? 0 : 1)

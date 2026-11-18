@@ -126,13 +126,15 @@
 
 ### M4 — ограниченная стоимость кадра и памяти
 
-- [ ] Профилировать M2/M3 до оптимизации; сохранить capture и воспроизводимые сцены.
-- [ ] Пространственный индекс, immutable geometry cache и GPU buffer LRU.
-- [ ] World-aligned raster tiles, levels of detail, dirty regions и incremental append.
-- [ ] Frame-budgeted rebuild, pinch fallback без смешивания разных масштабов в одной области.
-- [ ] Bounded CPU/GPU allocations, batching тяжёлого spray, memory warning и thermal policy.
-- [ ] Metal validation, GPU frame capture, Instruments/Metal System Trace и signposts.
-- [ ] Сравнить baseline и tile pipeline на одинаковой сцене/устройстве.
+Ход и измерения: [m4-render-cache.md](progress/m4-render-cache.md).
+
+- [x] Профилировать до оптимизации; воспроизводимая сцена — `RenderPerformanceTests` и `tools/render-harness`. Capture на устройстве ещё не снят.
+- [x] Пространственный индекс (`StrokeIndex`), бюджет GPU-геометрии с вытеснением дальнего (`GeometryCache`). Отдельного CPU geometry LRU нет.
+- [x] World-aligned raster tiles, √2-уровни во время zoom, порча (dirty) и incremental append.
+- [x] Rebuild в бюджете кадра, pinch fallback растянутыми непрозрачными тайлами другого масштаба.
+- [ ] Bounded CPU/GPU allocations, batching тяжёлого spray, thermal policy. Memory warning сбрасывает тайлы и вложения.
+- [ ] Metal validation, GPU frame capture, Instruments/Metal System Trace на устройстве. Signposts готовы.
+- [ ] Сравнить baseline и tile pipeline на устройстве. На Apple M4 (macOS-стенд) сравнение уже есть.
 
 **Выход:** pan готовой сцены не пересобирает её геометрию; delete не оставляет ghost; память ограничена в плотном мире; FPS и задержка описаны измерениями.
 

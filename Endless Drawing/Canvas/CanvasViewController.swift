@@ -29,6 +29,7 @@ final class CanvasViewController: UIViewController {
     private var gpuStrokes = GeometryCache()
     /// Shared scene by id, strokes still lacking GPU geometry, and whether their priority must be re-sorted.
     private var strokesByID: [UUID: LocalStroke] = [:]
+    private var sequenceByID: [UUID: Int64] = [:]
     private var missingGeometry: Set<UUID> = []
     private var geometryOrderStale = true
     private static let geometryBudget = 64 * 1024 * 1024
@@ -325,8 +326,21 @@ final class CanvasViewController: UIViewController {
         }
     }
 
+    /// Shared: confirmed strokes (server seq order) are baked into tiles; pending/volatile drafts stay in the
+    /// overlay because their global order is unknown until acknowledged. Local: everything is in local order.
     private func synchronizeStrokes() {
-        renderer?.strokes = localStrokes.compactMap { gpuStrokes[$0.id] }
+        if model.isShared {
+            var confirmed: [MetalRenderer.GPUStroke] = [], overlay: [MetalRenderer.GPUStroke] = []
+            for stroke in localStrokes {
+                guard var geometry = gpuStrokes[stroke.id] else { continue }
+                if let sequence = sequenceByID[stroke.id] { geometry.sequence = sequence; confirmed.append(geometry) }
+                else { overlay.append(geometry) }
+            }
+            renderer?.strokes = confirmed
+            renderer?.overlay = overlay
+        } else {
+            renderer?.strokes = localStrokes.compactMap { gpuStrokes[$0.id] }
+        }
         requestFrame()
     }
 
@@ -363,8 +377,10 @@ final class CanvasViewController: UIViewController {
         let previous = Set(strokesByID.keys)
         var ids: Set<UUID> = []
         let hidden = sharedState?.hidden ?? []
-        for record in sharedState?.confirmed ?? [] where strokeExtents[record.drawable.id] == nil {
-            strokeExtents[record.drawable.id] = record.extent
+        var sequences: [UUID: Int64] = [:]
+        for record in sharedState?.confirmed ?? [] {
+            sequences[record.drawable.id] = record.server.sequence
+            if strokeExtents[record.drawable.id] == nil { strokeExtents[record.drawable.id] = record.extent }
         }
         let strokes = (sharedState?.confirmed.map(\.drawable) ?? []) + (sharedState?.pending ?? []) + volatileStrokes
         localStrokes = strokes.filter { stroke in
@@ -373,6 +389,7 @@ final class CanvasViewController: UIViewController {
             return true
         }
         strokesByID = Dictionary(uniqueKeysWithValues: localStrokes.map { ($0.id, $0) })
+        sequenceByID = sequences.filter { ids.contains($0.key) }
         if ids != previous { renderBudgetBlocked = false; model.graphicsLimited = false }
         gpuStrokes.retain { ids.contains($0) }
         strokeExtents = strokeExtents.filter { ids.contains($0.key) }

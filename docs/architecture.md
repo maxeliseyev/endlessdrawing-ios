@@ -1,6 +1,6 @@
 # Архитектура нативного iPad-клиента
 
-Статус: целевая архитектура с частичной реализацией. В [M2.3](progress/m2-shared-canvas.md) включены общий Canvas, WorldSession/SceneStore, journal/send/ack/undo и все четыре Metal-кисти, поверх M2.1/M2.2. Обычный app entry — production v2/v1; тесты/preview изолированы. Тайлы/LOD, eraser и Pencil Pro gestures ещё не реализованы; physical shared-world/performance acceptance остаётся. Исторический локальный срез — [M1](progress/m1-local-canvas.md). Принятая основа и этапы: [implementation-plan.md](implementation-plan.md). Числовые бюджеты ниже — начальные настройки для проверки, не измеренные показатели.
+Статус: целевая архитектура с частичной реализацией. В [M2.3](progress/m2-shared-canvas.md) включены общий Canvas, WorldSession/SceneStore, journal/send/ack/undo и все четыре Metal-кисти, поверх M2.1/M2.2. Обычный app entry — production v2/v1; тесты/preview изолированы. Тайлы, однопроходная композиция и параллельная геометрия реализованы в [M4](progress/m4-render-cache.md) (на iPad ещё не измерены); eraser и Pencil Pro gestures ещё не реализованы; physical shared-world/performance acceptance остаётся. Исторический локальный срез — [M1](progress/m1-local-canvas.md). Принятая основа и этапы: [implementation-plan.md](implementation-plan.md). Числовые бюджеты ниже — начальные настройки для проверки, не измеренные показатели.
 
 ## 1. Источники совместимости
 
@@ -214,6 +214,8 @@ SwiftUI overlay/popover, а не постоянный toolbar. Сохранит�
 6. Present drawable; completion handler освобождает только ресурсы завершившегося command buffer.
 
 На M1/M2 допустим direct rendering видимого множества, чтобы проверить правильность до тайлов. Pending не встраивать в confirmed tiles: его положение в глобальном порядке ещё неизвестно.
+
+Реализовано (M4): подтверждённые штрихи запекаются в тайлы 512 px. Кадр — один проход: копия видимых тайлов по целым пикселям snapped-камеры, затем overlay (pending и volatile) и preview. Каждый штрих при этом рисуется одним проходом на цель через framebuffer fetch: покрытие с `max`, композит opacity и сброс покрытия — отдельными draw. Где fetch нет (iOS Simulator), остаётся двухпроходный путь.
 
 ### Прозрачность — один раз на штрих
 

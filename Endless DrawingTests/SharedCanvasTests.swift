@@ -67,7 +67,7 @@ struct SharedCanvasTests {
         let preview = LocalStroke(id: stroke.id, points: stroke.points + [WorldPoint(x: 40, y: 0)], style: style)
         renderer.preview = try renderer.upload(#require(BrushGeometry.prepare(preview, realPointCount: 2)))
         controller.complete(stroke)
-        #expect(renderer.strokes.filter { $0.id == stroke.id }.count == 1)
+        #expect((renderer.strokes + renderer.overlay).filter { $0.id == stroke.id }.count == 1)
         let lifted = try frame(renderer)
         #expect(lifted[(64 * 128 + 44) * 4] < 255)
         #expect(lifted[(64 * 128 + 90) * 4] == 255) // predictions removed, real ink never cleared
@@ -77,7 +77,7 @@ struct SharedCanvasTests {
         await peer.releaseAck()
         try await wait { model.worldState?.pendingCount == 0 }
         #expect(await journal.snapshot().undo.map(\.strokeID) == [stroke.id])
-        #expect(renderer.strokes.filter { $0.id == stroke.id }.count == 1)
+        #expect((renderer.strokes + renderer.overlay).filter { $0.id == stroke.id }.count == 1)
         #expect(try frame(renderer)[(64 * 128 + 44) * 4] < 255)
         model.command?(.undo)
         try await wait {
@@ -95,7 +95,7 @@ struct SharedCanvasTests {
         storage.failWrites(true)
         let stroke = LocalStroke(id: UUID(), points: [.zero], style: BrushStyle())
         controller.complete(stroke)
-        try await wait { model.failure != nil && renderer.strokes.contains { $0.id == stroke.id } }
+        try await wait { model.failure != nil && (renderer.strokes + renderer.overlay).contains { $0.id == stroke.id } }
         #expect(await peer.creates().isEmpty)
         #expect(await journal.snapshot().operations.isEmpty)
         #expect(try frame(renderer).contains { $0 < 255 })
@@ -103,6 +103,6 @@ struct SharedCanvasTests {
         model.failure = nil; model.command?(.retry)
         try await wait { await journal.snapshot().undo.count == 1 }
         #expect(await peer.creates().first?.payload.id == stroke.id)
-        #expect(renderer.strokes.filter { $0.id == stroke.id }.count == 1)
+        #expect((renderer.strokes + renderer.overlay).filter { $0.id == stroke.id }.count == 1)
     }
 }
