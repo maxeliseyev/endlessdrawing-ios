@@ -56,4 +56,19 @@ struct ColorChoiceTests {
         print("PALETTE with recents \(natural.height) pt")
         #expect(natural.height <= 744 - 32)
     }
+
+    /// A partly filled recent row must not stretch the palette to the whole screen (seen on iPad: one recent
+    /// color, empty slots grew to fill the height, and the palette could then only move sideways).
+    @Test func partlyFilledRecentRowKeepsNaturalHeight() throws {
+        let name = "ColorChoiceTests.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let model = CanvasModel(defaults: defaults)
+        model.strokeStarted(with: InkColor(red: 220, green: 230, blue: 80))
+        let host = UIHostingController(rootView: ContextPalette(model: model))
+        let natural = host.sizeThatFits(in: CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude))
+        let offered = host.sizeThatFits(in: CGSize(width: 320, height: 1300))
+        #expect(natural.height < 700)
+        #expect(offered.height == natural.height)
+    }
 }

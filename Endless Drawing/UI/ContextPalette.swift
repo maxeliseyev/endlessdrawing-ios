@@ -81,7 +81,8 @@ struct ContextPalette: View {
                     HStack(spacing: 0) {
                         ForEach(model.recentColors.colors, id: \.hex) { swatch($0) }
                         ForEach(model.recentColors.colors.count..<RecentColors.capacity, id: \.self) { _ in
-                            Color.clear.frame(maxWidth: .infinity, minHeight: 44)
+                            // Fixed height: a bare Color is greedy and stretched the palette to the screen.
+                            Color.clear.frame(maxWidth: .infinity).frame(height: 44)
                         }
                     }
                     .accessibilityElement(children: .contain)
