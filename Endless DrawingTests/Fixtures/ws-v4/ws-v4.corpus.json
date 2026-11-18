@@ -1,0 +1,47 @@
+[
+  {
+    "name": "priority-full",
+    "value": {
+      "type": "viewport.subscribe",
+      "subscription_id": "00000000-0000-4000-8000-000000000001",
+      "bounds": {
+        "min_x": -1500,
+        "min_y": -1050,
+        "max_x": 1500,
+        "max_y": 1050
+      },
+      "visible_bounds": {
+        "min_x": -500,
+        "min_y": -350,
+        "max_x": 500,
+        "max_y": 350
+      }
+    }
+  },
+  {
+    "name": "priority-cached",
+    "value": {
+      "type": "viewport.subscribe.cached",
+      "subscription_id": "00000000-0000-4000-8000-000000000001",
+      "bounds": {
+        "min_x": -1500,
+        "min_y": -1050,
+        "max_x": 1500,
+        "max_y": 1050
+      },
+      "visible_bounds": {
+        "min_x": -500,
+        "min_y": -350,
+        "max_x": 500,
+        "max_y": 350
+      }
+    }
+  },
+  {
+    "name": "welcome-priority",
+    "value": {
+      "type": "hello.ack",
+      "protocol_version": 4
+    }
+  }
+]

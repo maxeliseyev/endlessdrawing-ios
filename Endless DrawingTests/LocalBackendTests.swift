@@ -68,7 +68,7 @@ struct LocalBackendTests {
         }
         #expect(await world.snapshot().confirmed.allSatisfy { $0.server.own })
         let retryConnection = try await duplicate.connect()
-        #expect(retryConnection.profile == .messagePackV2)
+        #expect(retryConnection.profile.isMessagePack) // v2/v3/v4 depending on the local backend gates
         try await duplicate.send(.hello(identity.secret))
         var retried = retryConnection.messages.makeAsyncIterator()
         guard case .hello = try await retried.next() else { Issue.record("Missing retry hello"); return }

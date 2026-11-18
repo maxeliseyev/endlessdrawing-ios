@@ -132,6 +132,12 @@ nonisolated struct ServerStroke: Decodable, Equatable, Sendable {
 }
 
 nonisolated struct WireBounds: Codable, Equatable, Sendable {
+    /// Overlap of two rectangles (v4 hint = visible window ∩ subscription); nil when they do not overlap.
+    func intersection(_ other: WireBounds) -> WireBounds? {
+        try? WireBounds(minX: max(minX, other.minX), minY: max(minY, other.minY),
+                        maxX: min(maxX, other.maxX), maxY: min(maxY, other.maxY))
+    }
+
     let minX: Double, minY: Double, maxX: Double, maxY: Double
     init(minX: Double, minY: Double, maxX: Double, maxY: Double) throws {
         guard [minX, minY, maxX, maxY].allSatisfy({ $0.isFinite && abs($0) <= Camera.worldLimit }),
@@ -152,7 +158,11 @@ nonisolated struct WireBounds: Codable, Equatable, Sendable {
 
 nonisolated enum ClientMessage: Encodable, Sendable {
     case hello(SessionSecret)
-    case subscribe(id: String, bounds: WireBounds)
+    /// `visible` is the v4 priority hint (required there, forbidden before v4; the codec enforces it).
+    case subscribe(id: String, bounds: WireBounds, visible: WireBounds? = nil)
+    /// v3+: manifest of authoritative membership, geometry fetched only for unknown ids.
+    case subscribeCached(id: String, bounds: WireBounds, visible: WireBounds? = nil)
+    case fetch(subscriptionID: String, token: UUID, batch: Int, strokeIDs: [UUID], final: Bool)
     case create(requestID: String, stroke: StrokePayload)
     case delete(requestID: String, strokeID: UUID)
 
@@ -166,14 +176,33 @@ nonisolated enum ClientMessage: Encodable, Sendable {
 
     func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
+        func subscription(_ type: String, _ id: String, _ bounds: WireBounds, _ visible: WireBounds?) throws {
+            try values.encode(type, forKey: .type)
+            try values.encode(WireLimits.identifier(id), forKey: .subscriptionID)
+            try values.encode(bounds, forKey: .bounds)
+            if let visible {
+                guard bounds.contains(visible) else { throw DrawingDataError.invalidMessage }
+                try values.encode(visible, forKey: .visibleBounds)
+            }
+        }
         switch self {
         case .hello(let secret):
             try values.encode("hello", forKey: .type)
             try values.encode(secret.base64URLValue, forKey: .sessionSecret)
-        case .subscribe(let id, let bounds):
-            try values.encode("viewport.subscribe", forKey: .type)
+        case .subscribe(let id, let bounds, let visible):
+            try subscription("viewport.subscribe", id, bounds, visible)
+        case .subscribeCached(let id, let bounds, let visible):
+            try subscription("viewport.subscribe.cached", id, bounds, visible)
+        case .fetch(let id, let token, let batch, let strokeIDs, let final):
+            guard (0...ManifestLimits.maximumBatchIndex).contains(batch), strokeIDs.count <= ManifestLimits.maximumIDsPerMessage else {
+                throw DrawingDataError.limitExceeded
+            }
+            try values.encode("viewport.fetch", forKey: .type)
             try values.encode(WireLimits.identifier(id), forKey: .subscriptionID)
-            try values.encode(bounds, forKey: .bounds)
+            try values.encode(token.uuidString.lowercased(), forKey: .snapshotToken)
+            try values.encode(batch, forKey: .batch)
+            try values.encode(strokeIDs.map { $0.uuidString.lowercased() }, forKey: .strokeIDs)
+            try values.encode(final, forKey: .final)
         case .create(let requestID, let stroke):
             try values.encode("stroke.create", forKey: .type)
             try values.encode(WireLimits.identifier(requestID), forKey: .requestID)
@@ -186,17 +215,32 @@ nonisolated enum ClientMessage: Encodable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case type, bounds, stroke
-        case sessionSecret = "session_secret", subscriptionID = "subscription_id"
-        case requestID = "request_id", strokeID = "stroke_id"
+        case type, bounds, stroke, batch, final
+        case sessionSecret = "session_secret", subscriptionID = "subscription_id", visibleBounds = "visible_bounds"
+        case requestID = "request_id", strokeID = "stroke_id", snapshotToken = "snapshot_token", strokeIDs = "stroke_ids"
     }
 }
+
+/// v3 manifest admission bounds (protocol-v3-manifest.md).
+nonisolated enum ManifestLimits {
+    static let maximumStrokes = 20_000
+    static let maximumPoints = 1_000_000
+    static let maximumIDsPerMessage = 1000
+    static let maximumBatchIndex = 20
+}
+
+nonisolated enum SnapshotFallbackReason: String, Sendable { case busy, sceneLimit = "scene_limit" }
 
 nonisolated enum ServerMessage: Decodable, Equatable, Sendable {
     case hello(spawn: WorldPoint?)
     case snapshotBegin(id: String)
     case snapshotChunk(id: String, strokes: [ServerStroke])
     case snapshotEnd(id: String)
+    case manifestBegin(id: String, token: UUID, strokeCount: Int, pointCount: Int)
+    case manifestChunk(id: String, token: UUID, strokeIDs: [UUID])
+    case manifestEnd(id: String, token: UUID)
+    case fetchEnd(id: String, token: UUID, batch: Int)
+    case snapshotFallback(id: String, reason: SnapshotFallbackReason)
     case created(id: String, stroke: ServerStroke)
     case deleted(id: String, strokeID: UUID, sequence: Int64)
     case createAcknowledged(requestID: String, stroke: ServerStroke)
@@ -215,6 +259,11 @@ nonisolated enum ServerMessage: Decodable, Equatable, Sendable {
         func id(_ key: CodingKeys) throws -> String { try WireLimits.identifier(values.decode(String.self, forKey: key)) }
         func strokeID() throws -> UUID { try StrokePayload.uuid(values.decode(String.self, forKey: .strokeID)) }
         func sequence() throws -> Int64 { try WireLimits.sequence(values.decode(Int64.self, forKey: .seq)) }
+        let version = decoder.userInfo[WireDecodingContext.protocolVersion] as? Int ?? 1
+        func manifest() throws -> (id: String, token: UUID) {
+            guard version >= 3 else { throw DrawingDataError.invalidMessage } // never accepted on v1/v2 sockets
+            return (try id(.subscriptionID), try StrokePayload.uuid(values.decode(String.self, forKey: .snapshotToken)))
+        }
         switch try values.decode(String.self, forKey: .type) {
         case "hello.ack":
             let expectedVersion = decoder.userInfo[WireDecodingContext.protocolVersion] as? Int ?? 1
@@ -235,7 +284,7 @@ nonisolated enum ServerMessage: Decodable, Equatable, Sendable {
             guard let count = list.count, count <= 1000 else { throw DrawingDataError.limitExceeded }
             var strokes: [ServerStroke] = []
             strokes.reserveCapacity(count)
-            let binary = decoder.userInfo[WireDecodingContext.protocolVersion] as? Int == 2
+            let binary = version >= 2
             var pointCount = 0
             while !list.isAtEnd {
                 let stroke = try list.decode(ServerStroke.self)
@@ -244,6 +293,33 @@ nonisolated enum ServerMessage: Decodable, Equatable, Sendable {
                 strokes.append(stroke)
             }
             self = .snapshotChunk(id: subscriptionID, strokes: strokes)
+        case "viewport.manifest.begin":
+            let (subscription, token) = try manifest()
+            let count = try values.decode(Int.self, forKey: .strokeCount), points = try values.decode(Int.self, forKey: .pointCount)
+            guard (0...ManifestLimits.maximumStrokes).contains(count), points >= count,
+                  points <= min(ManifestLimits.maximumPoints, count * StrokeInput.maximumPoints) else { throw DrawingDataError.invalidMessage }
+            self = .manifestBegin(id: subscription, token: token, strokeCount: count, pointCount: points)
+        case "viewport.manifest.chunk":
+            let (subscription, token) = try manifest()
+            var list = try values.nestedUnkeyedContainer(forKey: .strokeIDs)
+            guard let count = list.count, count <= ManifestLimits.maximumIDsPerMessage else { throw DrawingDataError.limitExceeded }
+            var ids: [UUID] = []
+            ids.reserveCapacity(count)
+            while !list.isAtEnd { ids.append(try StrokePayload.uuid(list.decode(String.self))) }
+            self = .manifestChunk(id: subscription, token: token, strokeIDs: ids)
+        case "viewport.manifest.end":
+            let (subscription, token) = try manifest()
+            self = .manifestEnd(id: subscription, token: token)
+        case "viewport.fetch.end":
+            let (subscription, token) = try manifest()
+            let batch = try values.decode(Int.self, forKey: .batch)
+            guard (0...ManifestLimits.maximumBatchIndex).contains(batch) else { throw DrawingDataError.invalidMessage }
+            self = .fetchEnd(id: subscription, token: token, batch: batch)
+        case "viewport.snapshot.fallback":
+            guard version >= 3, let reason = SnapshotFallbackReason(rawValue: try values.decode(String.self, forKey: .reason)) else {
+                throw DrawingDataError.invalidMessage
+            }
+            self = .snapshotFallback(id: try id(.subscriptionID), reason: reason)
         case "stroke.created": self = .created(id: try id(.subscriptionID), stroke: try values.decode(ServerStroke.self, forKey: .stroke))
         case "stroke.deleted": self = .deleted(id: try id(.subscriptionID), strokeID: try strokeID(), sequence: try sequence())
         case "ack":
@@ -267,8 +343,9 @@ nonisolated enum ServerMessage: Decodable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case type, spawn, x, y, strokes, stroke, seq, operation, code
+        case type, spawn, x, y, strokes, stroke, seq, operation, code, batch, reason
         case protocolVersion = "protocol_version", subscriptionID = "subscription_id"
         case requestID = "request_id", strokeID = "stroke_id", alreadyDeleted = "already_deleted"
+        case snapshotToken = "snapshot_token", strokeCount = "stroke_count", pointCount = "point_count", strokeIDs = "stroke_ids"
     }
 }

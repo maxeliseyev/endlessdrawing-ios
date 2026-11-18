@@ -63,6 +63,15 @@ actor WorldSession {
     private var reconnectRequested = false
     private var suspendedForRegion: WireBounds?
     private var blocked = false
+    /// Negotiated per connection; v3+ allows cached subscriptions, v4 requires the visible hint.
+    private var profile = TransportProfile.messagePackV2
+    /// A completed snapshot on this connection lets the next subscription reuse its records (v3+).
+    private var reusable = false
+    private var manifest = ManifestLoader()
+    /// Fetch denied by the pacer; sent from tick before anything else.
+    private var pendingFetch: ManifestLoader.FetchRequest?
+    /// Fallback asks for a full subscription after a short pause, without reconnecting.
+    private var resubscribeAt: TimeInterval?
     private var snapshotInterval: OSSignpostIntervalState?
     private var lastPublish = 0.0
     private var publishFlush: Task<Void, Never>?
@@ -194,6 +203,7 @@ actor WorldSession {
                 let connection = try await transport.connect()
                 guard running, token == epoch else { return }
                 connectionID = connection.id; pacer = RequestPacer(); attempt = nil
+                profile = connection.profile; reusable = false; manifest = ManifestLoader(); pendingFetch = nil; resubscribeAt = nil
                 let now = ProcessInfo.processInfo.systemUptime
                 helloDeadline = now + timing.hello; lastPing = now
                 _ = pacer.admit(.hello, now: now)
@@ -244,14 +254,29 @@ actor WorldSession {
         }
         if let attempt, now >= attempt.deadline { await reconnect(); return }
         do {
-            if let region, (scene.subscriptionID == nil || scene.bounds?.contains(region.visible) != true),
+            if let request = pendingFetch {
+                guard pacer.admit(.fetch, now: now) else { return }
+                pendingFetch = nil
+                try await transport.send(request.message)
+                return
+            }
+            let fallbackDue = resubscribeAt.map { now >= $0 } ?? false
+            if let region, resubscribeAt == nil || fallbackDue,
+               fallbackDue || scene.subscriptionID == nil || scene.bounds?.contains(region.visible) != true,
                pacer.admit(.subscribe, now: now) {
                 let id = UUID().uuidString.lowercased()
-                scene.subscribe(id: id, bounds: region.subscription)
+                let cached = profile.supportsManifest && reusable
+                // v4 hint: the visible window clipped to the subscription (and thereby to the world).
+                let visible = profile.requiresVisibleBounds ? (region.visible.intersection(region.subscription) ?? region.subscription) : nil
+                resubscribeAt = nil
+                manifest.start(subscriptionID: id, cached: cached)
+                scene.subscribe(id: id, bounds: region.subscription, unordered: profile.supportsManifest)
                 if let snapshotInterval { Signposts.snapshot.endInterval("subscription", snapshotInterval, "superseded") }
-                snapshotInterval = Signposts.snapshot.beginInterval("subscription"); snapshotChunks = 0
+                snapshotInterval = Signposts.snapshot.beginInterval("subscription", "\(cached ? "cached" : "full", privacy: .public)")
+                snapshotChunks = 0
                 snapshotDeadline = now + timing.snapshot; status = .loading; publish()
-                try await transport.send(.subscribe(id: id, bounds: region.subscription))
+                try await transport.send(cached ? .subscribeCached(id: id, bounds: region.subscription, visible: visible)
+                                                : .subscribe(id: id, bounds: region.subscription, visible: visible))
                 return
             }
             if now - lastPing >= timing.ping, pacer.admit(.ping, now: now) {
@@ -284,6 +309,22 @@ actor WorldSession {
         }
     }
 
+    /// Manifest contract violations mean this connection's cache can no longer be trusted:
+    /// drop the right to cached subscriptions and resync with a fresh connection (full snapshot).
+    private func manifestStep(_ body: () throws -> Void) throws {
+        do { try body() }
+        catch ManifestLoader.Failure.resync {
+            reusable = false; manifest = ManifestLoader(); pendingFetch = nil
+            throw TransportFailure.network
+        }
+    }
+
+    private func sendFetch(_ request: ManifestLoader.FetchRequest) async throws {
+        Signposts.snapshot.emitEvent("fetch", "batch \(request.batch) ids \(request.strokeIDs.count)")
+        guard pacer.admit(.fetch, now: ProcessInfo.processInfo.systemUptime) else { pendingFetch = request; return }
+        try await transport.send(request.message)
+    }
+
     private func reconnect() async {
         reconnectRequested = true
         await transport.disconnect()
@@ -304,6 +345,7 @@ actor WorldSession {
             guard helloDeadline == nil else { throw TransportFailure.malformedMessage }
             try scene.begin(id: id)
         case .snapshotChunk(let id, let strokes):
+            if manifest.owns(id) { try manifestStep { try manifest.geometry(id: id, strokes: strokes) } }
             try scene.chunk(id: id, strokes: strokes)
             if id == scene.subscriptionID {
                 snapshotChunks += 1
@@ -311,12 +353,40 @@ actor WorldSession {
             }
         case .snapshotEnd(let id):
             let current = id == scene.subscriptionID
+            if manifest.owns(id) { try manifestStep { try manifest.snapshotEnd(id: id) } }
             try scene.end(id: id)
             if current {
                 snapshotDeadline = nil; snapshotTimeouts = 0; status = .live
+                reusable = profile.supportsManifest
                 if let snapshotInterval { Signposts.snapshot.endInterval("subscription", snapshotInterval, "\(self.snapshotChunks) chunks") }
                 snapshotInterval = nil
             }
+        case .manifestBegin(let id, let snapshotToken, let strokeCount, let pointCount):
+            try manifestStep { try manifest.begin(id: id, token: snapshotToken, strokeCount: strokeCount, pointCount: pointCount) }
+        case .manifestChunk(let id, let snapshotToken, let strokeIDs):
+            try manifestStep { try manifest.chunk(id: id, token: snapshotToken, strokeIDs: strokeIDs) }
+        case .manifestEnd(let id, let snapshotToken):
+            let scene = self.scene
+            var result: (retained: [SceneStroke], request: ManifestLoader.FetchRequest)?
+            try manifestStep { result = try manifest.end(id: id, token: snapshotToken, cached: { scene.cached($0) }) }
+            if let result {
+                try self.scene.retain(id: id, records: result.retained)
+                let counts = manifest.counts
+                Signposts.snapshot.emitEvent("manifest", "\(counts.members) members \(counts.missing) missing")
+                try await sendFetch(result.request)
+            }
+        case .fetchEnd(let id, let snapshotToken, let batch):
+            var request: ManifestLoader.FetchRequest?
+            try manifestStep { request = try manifest.fetchEnd(id: id, token: snapshotToken, batch: batch) }
+            if let request { try await sendFetch(request) }
+        case .snapshotFallback(let id, let reason):
+            guard id == scene.subscriptionID else { return }
+            // busy / scene_limit: no partial manifest was sent; load a full snapshot shortly, same socket.
+            reusable = false; manifest = ManifestLoader(); pendingFetch = nil
+            snapshotDeadline = nil
+            resubscribeAt = ProcessInfo.processInfo.systemUptime + 1
+            if reason == .sceneLimit { issue = .dense }
+            Signposts.snapshot.emitEvent("fallback", "\(reason.rawValue, privacy: .public)")
         case .created(let id, let stroke): try scene.created(id: id, stroke: stroke)
         case .deleted(let id, let strokeID, let sequence): try scene.deleted(id: id, strokeID: strokeID, sequence: sequence)
         case .createAcknowledged(let requestID, let stroke):

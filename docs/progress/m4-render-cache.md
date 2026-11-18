@@ -144,3 +144,14 @@ iPad Pro 11" (M4), iPadOS 26.6.2, Metal System Trace, 45 с, **Debug-сборк�
   - одна подписка (1.7 с) отменена новым pan.
 
   Это отрисовкой не лечится. Нужны: visible-first и manifest (backend v4), меньший prefetch или двухэтапная подписка, кэш сцены на диске.
+
+## Транспорт v4/v3 (18.11.2026)
+
+Backend M3 опубликован (`5ac7ddf`). Нативный клиент теперь предлагает v4 → v3 → v2 → JSON v1. Ход и проверки:
+
+- v4: каждая подписка несёт `visible_bounds` (видимое ∩ подписка), сервер отдаёт видимые штрихи первыми. `SceneStore` для v3+ принимает чанки в любом порядке seq (каждый id один раз), отрисовка остаётся по seq, renderer портит только затронутые тайлы.
+- v3+: после завершённого snapshot следующая подписка того же соединения — `viewport.subscribe.cached`. Известные штрихи берутся из сцены, сеть передаёт только недостающие (`ManifestLoader`, порт веб-клиента).
+- Fallback `busy`/`scene_limit` → полный snapshot через 1 с без reconnect. Нарушение manifest-контракта → reconnect и полный snapshot.
+- Сигнпосты: `subscription` с пометкой `full`/`cached`, `manifest` (members/missing), `fetch` (batch, ids), `fallback`.
+- Проверки: corpus v3/v4 обоих кодировщиков, точное совпадение нативных сообщений с corpus, ManifestLoader (тёплая/частичная область, batch, нарушения), SceneStore (порядок, retain, tombstone), WorldSession с v4-peer (full с hint → cached с fetch только нового, fallback, reconnect, собственный штрих при cached). Read-only production smoke: выбран v4, 21 штрих, без мутаций. Приложение в симуляторе против production: `subscription: full`, 2 чанка.
+- Осталось: Release-trace на iPad с pan, чтобы увидеть `cached` и время до видимого.

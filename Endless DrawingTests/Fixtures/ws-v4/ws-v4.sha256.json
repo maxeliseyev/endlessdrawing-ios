@@ -1,0 +1,9 @@
+{
+  "corpus.json": "afaeabc24ac8fef3a707810f2859632efe556cf35f9aad661e2f00d748a4c020",
+  "priority-cached.rust.msgpack": "03f5038f2ed820e023b6aab0556b4cd5e95e5af98c470b3a3e6b11cb41ee16b5",
+  "priority-cached.ts.msgpack": "63707a524f220232181410d9266322419cd886a1f4f2c13804243a3d6920b4ec",
+  "priority-full.rust.msgpack": "a2622e400c042ae70528f947e249cfbc914939d714296de101c5286fc0f44f0e",
+  "priority-full.ts.msgpack": "18cd3eb41b4d680b2bc98773cfe3a69414bb2b728174f2cd4699b05b6eb23d44",
+  "welcome-priority.rust.msgpack": "a42fd67f467ba6b9ec5b67448eb3f26e1a3da9fcb49d33c13047ddcf70b96474",
+  "welcome-priority.ts.msgpack": "6350e6d7a0834db4f67395cf7d11b8245d647ea8a388210d06c755c9463b5e8d"
+}

@@ -19,18 +19,33 @@ nonisolated enum TransportFailure: Error, Equatable, Sendable {
 
 nonisolated enum TransportProfile: Sendable, Equatable {
     static let messagePackProtocol = "endless-drawing.msgpack.v2"
+    static let manifestProtocol = "endless-drawing.msgpack.v3"
+    static let priorityProtocol = "endless-drawing.msgpack.v4"
     static let jsonProtocol = "endless-drawing.json.v1"
-    case legacyJSONV1, jsonV1, messagePackV2
+    /// v3 adds manifest + fetch (cached subscribe); v4 adds visible-first snapshots (`visible_bounds`).
+    case legacyJSONV1, jsonV1, messagePackV2, messagePackV3, messagePackV4
 
-    var protocolVersion: Int { self == .messagePackV2 ? 2 : 1 }
-    var maximumServerBytes: Int { self == .messagePackV2 ? 256 * 1024 : WireLimits.maximumServerBytes }
+    var protocolVersion: Int {
+        switch self {
+        case .legacyJSONV1, .jsonV1: 1
+        case .messagePackV2: 2
+        case .messagePackV3: 3
+        case .messagePackV4: 4
+        }
+    }
+    var isMessagePack: Bool { protocolVersion >= 2 }
+    var supportsManifest: Bool { protocolVersion >= 3 }
+    var requiresVisibleBounds: Bool { protocolVersion >= 4 }
+    var maximumServerBytes: Int { isMessagePack ? 256 * 1024 : WireLimits.maximumServerBytes }
 }
 
 /// Explicit deployment policy, never a fallback after a failed negotiation.
 nonisolated enum TransportPolicy: Sendable, Equatable {
     case negotiated, legacyJSONV1
+    /// Preference order; the server picks the first one it has enabled.
     var offeredProtocols: [String] {
-        self == .negotiated ? [TransportProfile.messagePackProtocol, TransportProfile.jsonProtocol] : []
+        self == .negotiated ? [TransportProfile.priorityProtocol, TransportProfile.manifestProtocol,
+                               TransportProfile.messagePackProtocol, TransportProfile.jsonProtocol] : []
     }
     func selected(_ value: String?) throws -> TransportProfile {
         if self == .legacyJSONV1 {
@@ -38,6 +53,8 @@ nonisolated enum TransportPolicy: Sendable, Equatable {
             return .legacyJSONV1
         }
         switch value {
+        case TransportProfile.priorityProtocol: return .messagePackV4
+        case TransportProfile.manifestProtocol: return .messagePackV3
         case TransportProfile.messagePackProtocol: return .messagePackV2
         case TransportProfile.jsonProtocol: return .jsonV1
         default: throw TransportFailure.unexpectedProfile
@@ -57,8 +74,17 @@ nonisolated struct SessionCodec: Sendable {
     let profile: TransportProfile
 
     func encode(_ message: ClientMessage) throws -> WebSocketPacket {
+        // Profile shape is a caller contract, never silently adapted on the wire.
+        switch message {
+        case .subscribe(_, _, let visible), .subscribeCached(_, _, let visible):
+            guard (visible != nil) == profile.requiresVisibleBounds else { throw TransportFailure.malformedMessage }
+            if case .subscribeCached = message, !profile.supportsManifest { throw TransportFailure.malformedMessage }
+        case .fetch:
+            guard profile.supportsManifest else { throw TransportFailure.malformedMessage }
+        default: break
+        }
         do {
-            if profile == .messagePackV2 {
+            if profile.isMessagePack {
                 return .binary(try BoundedMessagePack.encode(message, maximumBytes: WireLimits.maximumClientBytes))
             }
             return .text(String(decoding: try message.jsonData(), as: UTF8.self))
@@ -68,18 +94,17 @@ nonisolated struct SessionCodec: Sendable {
     }
 
     func decode(_ packet: WebSocketPacket) throws -> ServerMessage {
-        switch (profile, packet) {
-        case (.messagePackV2, .binary), (.jsonV1, .text), (.legacyJSONV1, .text): break
-        default: throw TransportFailure.wrongMessageType
+        switch packet {
+        case .binary: guard profile.isMessagePack else { throw TransportFailure.wrongMessageType }
+        case .text: guard !profile.isMessagePack else { throw TransportFailure.wrongMessageType }
         }
         guard packet.byteCount <= profile.maximumServerBytes else { throw TransportFailure.messageTooLarge }
         do {
-            switch (profile, packet) {
-            case (.messagePackV2, .binary(let bytes)):
-                return try BoundedMessagePack.decode(ServerMessage.self, from: bytes, protocolVersion: 2)
-            case (.legacyJSONV1, .text(let text)), (.jsonV1, .text(let text)):
+            switch packet {
+            case .binary(let bytes):
+                return try BoundedMessagePack.decode(ServerMessage.self, from: bytes, protocolVersion: profile.protocolVersion)
+            case .text(let text):
                 return try ServerMessage.decode(Data(text.utf8))
-            default: throw TransportFailure.wrongMessageType
             }
         } catch let failure as TransportFailure { throw failure }
         catch DrawingDataError.unsupportedProtocol { throw TransportFailure.incompatibleVersion }

@@ -3,9 +3,14 @@ import Testing
 @testable import Endless_Drawing
 
 actor WorldPeer: CanvasTransport {
-    enum Mode: Sendable { case normal, loseFirstAck, delayFirstAck, rateLimitOnce, silentHello, silentSnapshot }
+    enum Mode: Sendable { case normal, loseFirstAck, delayFirstAck, rateLimitOnce, silentHello, silentSnapshot, fallbackFirstCached }
     struct CreateAttempt: Sendable { let requestID: String; let payload: StrokePayload }
+    struct Subscription: Sendable { let id: String; let bounds: WireBounds; let visible: WireBounds?; let cached: Bool }
     private let mode: Mode
+    private let profile: TransportProfile
+    private var subscriptionLog: [Subscription] = []
+    private var fetchedIDs: [UUID] = []
+    private var fallbacks = 0
     private var output: AsyncThrowingStream<ServerMessage, any Error>.Continuation?
     private var records: [UUID: ServerStroke] = [:]
     private var deleted: Set<UUID> = []
@@ -15,8 +20,23 @@ actor WorldPeer: CanvasTransport {
     private var sequence: Int64 = 0
     private var connectionCount = 0
     private var allowed = true
+    private var manifestToken: UUID?
 
-    init(mode: Mode = .normal) { self.mode = mode }
+    init(mode: Mode = .normal, profile: TransportProfile = .messagePackV2) { self.mode = mode; self.profile = profile }
+    func subscriptions() -> [Subscription] { subscriptionLog }
+    func fetched() -> [UUID] { fetchedIDs }
+    func dropConnection() { output?.finish(throwing: TransportFailure.network); output = nil }
+    /// A stroke someone else drew while this client was not subscribed there (no live event delivered).
+    func injectRemote(_ payload: StrokePayload) throws {
+        sequence += 1; records[payload.id] = try ServerStroke(payload: payload, sequence: sequence, own: false)
+    }
+    /// Server membership: strokes whose extent meets the bounds; v4 sends the visible class first.
+    private func members(_ bounds: WireBounds, visible: WireBounds?) -> [ServerStroke] {
+        let inside = records.values.filter { StrokeExtent($0.payload.drawable).intersects(bounds) }.sorted { $0.sequence < $1.sequence }
+        guard let visible else { return inside }
+        let first = inside.filter { StrokeExtent($0.payload.drawable).intersects(visible) }
+        return first + inside.filter { !StrokeExtent($0.payload.drawable).intersects(visible) }
+    }
     func allow(_ value: Bool) { allowed = value }
     func creates() -> [CreateAttempt] { attempts }
     func connects() -> Int { connectionCount }
@@ -28,7 +48,7 @@ actor WorldPeer: CanvasTransport {
         guard allowed else { throw TransportFailure.network }
         let (stream, continuation) = AsyncThrowingStream<ServerMessage, any Error>.makeStream(bufferingPolicy: .bufferingOldest(128))
         output = continuation; scope = nil
-        return .init(id: UUID(), profile: .messagePackV2, messages: stream)
+        return .init(id: UUID(), profile: profile, messages: stream)
     }
     func disconnect() { output?.finish(); output = nil }
     func ping() {}
@@ -36,11 +56,39 @@ actor WorldPeer: CanvasTransport {
         switch message {
         case .hello:
             if mode != .silentHello { output?.yield(.hello(spawn: nil)) }
-        case .subscribe(let id, _):
+        case .subscribeCached(let id, let bounds, let visible):
+            precondition(profile.supportsManifest && (visible != nil) == profile.requiresVisibleBounds)
+            subscriptionLog.append(Subscription(id: id, bounds: bounds, visible: visible, cached: true))
+            scope = id
+            output?.yield(.snapshotBegin(id: id))
+            if mode == .fallbackFirstCached && fallbacks == 0 {
+                fallbacks += 1; output?.yield(.snapshotFallback(id: id, reason: .busy)); return
+            }
+            let ids = members(bounds, visible: visible)
+            let token = UUID()
+            manifestToken = token
+            output?.yield(.manifestBegin(id: id, token: token, strokeCount: ids.count,
+                                         pointCount: ids.reduce(0) { $0 + $1.payload.points.count }))
+            if !ids.isEmpty { output?.yield(.manifestChunk(id: id, token: token, strokeIDs: ids.map(\.payload.id))) }
+            output?.yield(.manifestEnd(id: id, token: token))
+        case .fetch(let id, let token, let batch, let strokeIDs, let final):
+            precondition(token == manifestToken && id == scope)
+            fetchedIDs += strokeIDs
+            let strokes = strokeIDs.compactMap { records[$0] }
+            if !strokes.isEmpty { output?.yield(.snapshotChunk(id: id, strokes: strokes)) }
+            output?.yield(final ? .snapshotEnd(id: id) : .fetchEnd(id: id, token: token, batch: batch))
+        case .subscribe(let id, let bounds, let visible):
+            precondition((visible != nil) == profile.requiresVisibleBounds)
+            subscriptionLog.append(Subscription(id: id, bounds: bounds, visible: visible, cached: false))
             if mode == .silentSnapshot { return }
             scope = id
             output?.yield(.snapshotBegin(id: id))
-            output?.yield(.snapshotChunk(id: id, strokes: records.values.sorted { $0.sequence < $1.sequence }))
+            if profile.supportsManifest {
+                let strokes = members(bounds, visible: visible)
+                if !strokes.isEmpty { output?.yield(.snapshotChunk(id: id, strokes: strokes)) }
+            } else {
+                output?.yield(.snapshotChunk(id: id, strokes: records.values.sorted { $0.sequence < $1.sequence }))
+            }
             output?.yield(.snapshotEnd(id: id))
         case .create(let requestID, let payload):
             attempts.append(CreateAttempt(requestID: requestID, payload: payload))
@@ -77,13 +125,14 @@ struct WorldSessionTests {
     private struct Harness {
         let directory: URL, peer: WorldPeer, journal: OperationJournal, world: WorldSession
     }
-    private func make(_ mode: WorldPeer.Mode = .normal, timing: WorldTiming = WorldTiming()) async throws -> Harness {
+    private func make(_ mode: WorldPeer.Mode = .normal, timing: WorldTiming = WorldTiming(),
+                      profile: TransportProfile = .messagePackV2) async throws -> Harness {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("world-tests-\(UUID())")
         let environment = try M2TestSupport.environment(), owner = UUID()
         let journal = try await OperationJournal.open(environment: environment, identityID: owner,
             storage: JournalFileStorage(url: directory.appendingPathComponent("operations.json")))
         let identity = DrawingIdentity(id: owner, secret: try SessionSecret(bytes: Data(repeating: 7, count: 32)))
-        let peer = WorldPeer(mode: mode)
+        let peer = WorldPeer(mode: mode, profile: profile)
         let world = WorldSession(transport: peer, identity: identity, journal: journal, initial: await journal.snapshot(), timing: timing)
         try await world.update(region: CanvasRegion(camera: Camera(), viewport: CanvasSize(width: 1024, height: 768)))
         return Harness(directory: directory, peer: peer, journal: journal, world: world)
@@ -201,5 +250,80 @@ struct WorldSessionTests {
         try await Task.sleep(for: .milliseconds(150))
         #expect(await h.peer.connects() == count)
         #expect(await h.world.snapshot().status == .stopped)
+    }
+
+    // MARK: - v4 visible-first and v3 manifest reuse
+
+    private func payload(x: Double) throws -> StrokePayload {
+        try StrokePayload(id: UUID(), points: [WorldPoint(x: x, y: 0), WorldPoint(x: x + 10, y: 5)], brush: .round,
+                          width: 4, color: "#202020", opacity: 1)
+    }
+
+    /// Visible window [688, 1712] leaves the first 3×3 subscription ([-1536, 1536]) but the origin stays inside.
+    private func panRight(_ world: WorldSession) async throws {
+        var camera = Camera(); camera.pan(screenDelta: WorldPoint(x: -1200, y: 0))
+        await world.update(region: try CanvasRegion(camera: camera, viewport: CanvasSize(width: 1024, height: 768)))
+    }
+
+    @Test func v4FirstSubscriptionIsFullWithVisibleHintThenPanReusesCachedRecords() async throws {
+        let h = try await make(profile: .messagePackV4)
+        defer { Task { await cleanup(h) } }
+        let near = try payload(x: 0), far = try payload(x: 1400)
+        try await h.peer.injectRemote(near)
+        await h.world.start()
+        try await wait { let state = await h.world.snapshot(); return state.status == .live && state.confirmed.count == 1 }
+        let first = try #require(await h.peer.subscriptions().first)
+        #expect(!first.cached)
+        let visible = try #require(first.visible)
+        #expect(first.bounds.contains(visible) && visible != first.bounds)
+        try await h.peer.injectRemote(far) // appeared while we were not subscribed there
+        try await panRight(h.world)
+        try await wait { let count = await h.peer.subscriptions().count; let live = await h.world.snapshot().status == .live; return count == 2 && live }
+        let second = try #require(await h.peer.subscriptions().last)
+        #expect(second.cached && second.visible != nil)
+        #expect(await h.peer.fetched() == [far.id]) // the known stroke is reused, not downloaded again
+        try await wait { Set(await h.world.snapshot().confirmed.map(\.server.payload.id)) == [near.id, far.id] }
+    }
+
+    @Test func fallbackBusyLoadsAFullSnapshotOnTheSameConnection() async throws {
+        let h = try await make(.fallbackFirstCached, profile: .messagePackV4)
+        defer { Task { await cleanup(h) } }
+        let near = try payload(x: 0)
+        try await h.peer.injectRemote(near)
+        await h.world.start()
+        try await wait { await h.world.snapshot().status == .live }
+        try await panRight(h.world)
+        try await wait { let count = await h.peer.subscriptions().count; let live = await h.world.snapshot().status == .live; return count == 3 && live }
+        let log = await h.peer.subscriptions()
+        #expect(log.map(\.cached) == [false, true, false]) // cached → busy fallback → full after the pause
+        #expect(await h.peer.connects() == 1)
+        #expect(await h.world.snapshot().confirmed.map(\.server.payload.id) == [near.id])
+    }
+
+    @Test func reconnectAlwaysStartsWithAFullSnapshot() async throws {
+        let h = try await make(profile: .messagePackV4)
+        defer { Task { await cleanup(h) } }
+        try await h.peer.injectRemote(try payload(x: 0))
+        await h.world.start()
+        try await wait { await h.world.snapshot().status == .live }
+        await h.peer.dropConnection()
+        try await wait { let connects = await h.peer.connects(); let count = await h.peer.subscriptions().count; return connects >= 2 && count >= 2 }
+        #expect(await h.peer.subscriptions().map(\.cached) == [false, false])
+        try await wait { await h.world.snapshot().status == .live }
+    }
+
+    @Test func ownDrawingDuringCachedSubscriptionIsNeitherLostNorDuplicated() async throws {
+        let h = try await make(profile: .messagePackV4)
+        defer { Task { await cleanup(h) } }
+        await h.world.start()
+        try await wait { await h.world.snapshot().status == .live }
+        let mine = try payload(x: 20)
+        _ = try await h.world.enqueue(mine.drawable)
+        try await wait { await h.journal.snapshot().undo.count == 1 }
+        try await panRight(h.world)
+        try await wait { let count = await h.peer.subscriptions().count; let live = await h.world.snapshot().status == .live; return count == 2 && live }
+        #expect(await h.peer.fetched().isEmpty) // own acked stroke is reused from the connection cache
+        let state = await h.world.snapshot()
+        #expect(state.confirmed.map(\.server.payload.id) == [mine.id] && state.pending.isEmpty && state.canUndo)
     }
 }

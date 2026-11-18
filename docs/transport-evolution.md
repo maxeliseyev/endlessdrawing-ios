@@ -1,6 +1,6 @@
 # Эволюция транспорта: план для iPad
 
-Статус: T1 уже подключён к общему Canvas в [M2.3](progress/m2-shared-canvas.md): WorldSession, scene, journal и четыре кисти, поверх M2.1/M2.2. Isolated backend/Postgres mutations и native read-only published WSS проверены. Physical iPad acceptance и native T2/T3 (manifest/visible-first) остаются впереди.
+Статус: T1 уже подключён к общему Canvas в [M2.3](progress/m2-shared-canvas.md): WorldSession, scene, journal и четыре кисти, поверх M2.1/M2.2. Isolated backend/Postgres mutations и native read-only published WSS проверены. **T2/T3 подключены 18.11.2026** по опубликованному backend M3 (`5ac7ddf`): клиент предлагает `endless-drawing.msgpack.v4`, `…v3`, `…v2`, `endless-drawing.json.v1`. v4 — `visible_bounds` (видимое ∩ подписка) в каждой подписке; v3+ — cached subscribe внутри соединения после завершённого snapshot (`ManifestLoader`: manifest → reuse из сцены → fetch недостающих batch ≤1000, stop-and-wait), `snapshot.fallback` busy/scene_limit → full через 1 с, нарушение контракта → reconnect + full. Pinned fixtures `ws-v3`/`ws-v4` (префикс файлов), read-only production smoke выбрал v4. Physical iPad acceptance остаётся.
 
 ## 1. Источники и версии
 

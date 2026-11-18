@@ -28,6 +28,8 @@ nonisolated struct SceneStore {
     private var pointCosts: [UUID: Int] = [:]
     private var points = 0
     private var lastSnapshotSequence: Int64 = 0
+    /// v3+: cached fetches and v4 visible-first deliver members out of seq order; each id still once.
+    private var unordered = false
 
     mutating func reconnect() {
         if let staging { confirmed.merge(staging) { _, new in new } }
@@ -38,7 +40,8 @@ nonisolated struct SceneStore {
         rebuildCosts()
     }
 
-    mutating func subscribe(id: String, bounds: WireBounds) {
+    mutating func subscribe(id: String, bounds: WireBounds, unordered: Bool = false) {
+        self.unordered = unordered
         // Previously shown staging can stay as bounded stale display, never complete membership.
         if let staging { confirmed.merge(staging) { _, new in new } }
         confirmed.merge(acknowledgements) { _, new in new }
@@ -60,8 +63,12 @@ nonisolated struct SceneStore {
         // Transactional even for direct reducer tests; no partial application on malformed chunks.
         var next = self
         for stroke in strokes {
-            guard stroke.sequence > next.lastSnapshotSequence else { throw SceneFailure.inconsistent }
-            next.lastSnapshotSequence = stroke.sequence
+            if unordered {
+                guard next.staging?[stroke.payload.id] == nil else { throw SceneFailure.inconsistent }
+            } else {
+                guard stroke.sequence > next.lastSnapshotSequence else { throw SceneFailure.inconsistent }
+                next.lastSnapshotSequence = stroke.sequence
+            }
             let record = SceneStroke(stroke)
             try next.validate(record)
             if next.tombstones[stroke.payload.id] != nil { continue }
@@ -123,6 +130,27 @@ nonisolated struct SceneStore {
         }
         guard let order else { return [] }
         return hidden.isEmpty ? order : order.filter { !hidden.contains($0.server.payload.id) }
+    }
+
+    /// Immutable record this connection already holds for a manifest member (v3 cache reuse).
+    func cached(_ id: UUID) -> SceneStroke? {
+        guard tombstones[id] == nil else { return nil }
+        return acknowledgements[id] ?? confirmed[id]
+    }
+
+    /// Pins already-known records into the loading snapshot without network geometry; transactional.
+    mutating func retain(id: String, records: [SceneStroke]) throws {
+        guard id == subscriptionID else { return }
+        guard loading, staging != nil else { throw SceneFailure.inconsistent }
+        var next = self
+        for record in records {
+            guard next.staging?[record.server.payload.id] == nil else { throw SceneFailure.inconsistent }
+            try next.validate(record)
+            if next.tombstones[record.server.payload.id] != nil { continue }
+            try next.reserve(record)
+            next.staging?[record.server.payload.id] = record
+        }
+        self = next
     }
 
     private func record(_ id: UUID) -> SceneStroke? { acknowledgements[id] ?? staging?[id] ?? confirmed[id] }

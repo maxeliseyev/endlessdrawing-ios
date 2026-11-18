@@ -1,0 +1,114 @@
+[
+  {
+    "name": "welcome",
+    "value": {
+      "type": "hello.ack",
+      "protocol_version": 3
+    }
+  },
+  {
+    "name": "cached-subscribe",
+    "value": {
+      "type": "viewport.subscribe.cached",
+      "subscription_id": "view-1",
+      "bounds": {
+        "min_x": -100,
+        "min_y": -100,
+        "max_x": 100,
+        "max_y": 100
+      }
+    }
+  },
+  {
+    "name": "manifest-begin",
+    "value": {
+      "type": "viewport.manifest.begin",
+      "subscription_id": "view-1",
+      "snapshot_token": "00000000-0000-4000-8000-000000000001",
+      "stroke_count": 2,
+      "point_count": 4
+    }
+  },
+  {
+    "name": "manifest-chunk",
+    "value": {
+      "type": "viewport.manifest.chunk",
+      "subscription_id": "view-1",
+      "snapshot_token": "00000000-0000-4000-8000-000000000001",
+      "stroke_ids": [
+        "00000000-0000-4000-8000-00000000000a",
+        "00000000-0000-4000-8000-00000000000b"
+      ]
+    }
+  },
+  {
+    "name": "manifest-end",
+    "value": {
+      "type": "viewport.manifest.end",
+      "subscription_id": "view-1",
+      "snapshot_token": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  {
+    "name": "fetch-partial",
+    "value": {
+      "type": "viewport.fetch",
+      "subscription_id": "view-1",
+      "snapshot_token": "00000000-0000-4000-8000-000000000001",
+      "batch": 0,
+      "stroke_ids": [
+        "00000000-0000-4000-8000-00000000000b"
+      ],
+      "final": true
+    }
+  },
+  {
+    "name": "fetch-more",
+    "value": {
+      "type": "viewport.fetch",
+      "subscription_id": "view-1",
+      "snapshot_token": "00000000-0000-4000-8000-000000000001",
+      "batch": 0,
+      "stroke_ids": [
+        "00000000-0000-4000-8000-00000000000a"
+      ],
+      "final": false
+    }
+  },
+  {
+    "name": "fetch-empty",
+    "value": {
+      "type": "viewport.fetch",
+      "subscription_id": "view-1",
+      "snapshot_token": "00000000-0000-4000-8000-000000000001",
+      "batch": 0,
+      "stroke_ids": [],
+      "final": true
+    }
+  },
+  {
+    "name": "fetch-end",
+    "value": {
+      "type": "viewport.fetch.end",
+      "subscription_id": "view-1",
+      "snapshot_token": "00000000-0000-4000-8000-000000000001",
+      "batch": 0
+    }
+  },
+  {
+    "name": "fallback-busy",
+    "value": {
+      "type": "viewport.snapshot.fallback",
+      "subscription_id": "view-1",
+      "reason": "busy"
+    }
+  },
+  {
+    "name": "fallback-scene_limit",
+    "value": {
+      "type": "viewport.snapshot.fallback",
+      "subscription_id": "view-1",
+      "reason": "scene_limit"
+    }
+  }
+]

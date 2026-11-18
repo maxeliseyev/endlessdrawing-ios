@@ -43,6 +43,42 @@ struct SceneStoreTests {
         #expect(scene.ordered(hidden: []).map(\.server.sequence) == [4, 7]) // bounded stale display
     }
 
+    /// v3+/v4: visible-first and cached fetches arrive out of seq order; each member still exactly once.
+    @Test func unorderedSnapshotAcceptsAnySeqOrderButRejectsRepeatedMembers() throws {
+        let a = try M2TestSupport.confirmed(M2TestSupport.payload(), sequence: 9)
+        let b = try M2TestSupport.confirmed(M2TestSupport.payload(), sequence: 3)
+        let region = try bounds(); var scene = SceneStore()
+        scene.subscribe(id: "v4", bounds: region, unordered: true); try scene.begin(id: "v4")
+        try scene.chunk(id: "v4", strokes: [a]); try scene.chunk(id: "v4", strokes: [b])
+        #expect(throws: SceneFailure.inconsistent) { try scene.chunk(id: "v4", strokes: [a]) }
+        try scene.end(id: "v4")
+        #expect(scene.ordered(hidden: []).map(\.server.sequence) == [3, 9])
+        var ordered = SceneStore()
+        ordered.subscribe(id: "v2", bounds: region); try ordered.begin(id: "v2")
+        try ordered.chunk(id: "v2", strokes: [a])
+        #expect(throws: SceneFailure.inconsistent) { try ordered.chunk(id: "v2", strokes: [b]) } // v2 keeps ascending seq
+    }
+
+    @Test func retainedCacheRecordsReplaceMembershipAtEndAndTombstonesStillWin() throws {
+        let kept = try M2TestSupport.confirmed(M2TestSupport.payload(), sequence: 1)
+        let dropped = try M2TestSupport.confirmed(M2TestSupport.payload(), sequence: 2)
+        let fetched = try M2TestSupport.confirmed(M2TestSupport.payload(), sequence: 3)
+        let deleted = try M2TestSupport.confirmed(M2TestSupport.payload(), sequence: 4)
+        let region = try bounds(); var scene = SceneStore()
+        scene.subscribe(id: "one", bounds: region, unordered: true); try scene.begin(id: "one")
+        try scene.chunk(id: "one", strokes: [kept, dropped, deleted]); try scene.end(id: "one")
+        scene.subscribe(id: "two", bounds: region, unordered: true); try scene.begin(id: "two")
+        let cachedKept = try #require(scene.cached(kept.payload.id))
+        let cachedDeleted = try #require(scene.cached(deleted.payload.id))
+        try scene.remove(deleted.payload.id, sequence: 4) // delete known before the manifest completes
+        #expect(scene.cached(deleted.payload.id) == nil)
+        try scene.retain(id: "two", records: [cachedKept, cachedDeleted])
+        #expect(throws: SceneFailure.inconsistent) { try scene.retain(id: "two", records: [cachedKept]) }
+        try scene.chunk(id: "two", strokes: [fetched])
+        try scene.end(id: "two")
+        #expect(scene.ordered(hidden: []).map(\.server.sequence) == [1, 3]) // dropped left the manifest, deleted stays gone
+    }
+
     @Test func acknowledgementsSurviveSnapshotBoundaryButDeletionWinsAgainstLateChunksAndAcks() throws {
         let stroke = try M2TestSupport.confirmed(M2TestSupport.payload(), sequence: 3)
         let region = try bounds(); var scene = SceneStore()
