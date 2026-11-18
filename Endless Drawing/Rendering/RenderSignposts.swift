@@ -8,6 +8,8 @@ nonisolated enum Signposts {
     static let geometry = OSSignposter(subsystem: subsystem, category: "geometry")
     static let tiles = OSSignposter(subsystem: subsystem, category: "tiles")
     static let snapshot = OSSignposter(subsystem: subsystem, category: "snapshot")
+    /// Pencil tap/squeeze diagnostics: phases, preferred actions and resulting commands (no coordinates).
+    static let input = Logger(subsystem: subsystem, category: "input")
 
     private static let subsystem = Bundle.main.bundleIdentifier ?? "EndlessDrawing"
 }

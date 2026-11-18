@@ -102,6 +102,7 @@ final class CanvasViewController: UIViewController {
         secondaryClick.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
         surface.addGestureRecognizer(secondaryClick)
         surface.addInteraction(UIPencilInteraction(delegate: self))
+        Signposts.input.notice("pencil interaction installed; preferred tap=\(UIPencilInteraction.preferredTapAction.rawValue, privacy: .public) squeeze=\(UIPencilInteraction.preferredSqueezeAction.rawValue, privacy: .public)")
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -689,12 +690,17 @@ extension CanvasViewController: @preconcurrency CAMetalDisplayLinkDelegate {
 /// Apple Pencil tap (2nd gen / Pro) and squeeze (Pro), following the user's preferred actions (architecture §5).
 extension CanvasViewController: UIPencilInteractionDelegate {
     func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveTap tap: UIPencilInteraction.Tap) {
-        performPencil(PencilCommand.resolve(UIPencilInteraction.preferredTapAction), at: tap.hoverPose?.location)
+        let action = UIPencilInteraction.preferredTapAction
+        let command = PencilCommand.resolve(action)
+        Signposts.input.notice("pencil tap preferred=\(action.rawValue, privacy: .public) command=\(String(describing: command), privacy: .public) hover=\(tap.hoverPose != nil, privacy: .public)")
+        performPencil(command, at: tap.hoverPose?.location)
     }
 
     func pencilInteraction(_ interaction: UIPencilInteraction, didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze) {
-        performPencil(PencilCommand.squeeze(UIPencilInteraction.preferredSqueezeAction, phase: squeeze.phase),
-                at: squeeze.hoverPose?.location)
+        let action = UIPencilInteraction.preferredSqueezeAction
+        let command = PencilCommand.squeeze(action, phase: squeeze.phase)
+        Signposts.input.notice("pencil squeeze phase=\(squeeze.phase.rawValue, privacy: .public) preferred=\(action.rawValue, privacy: .public) command=\(String(describing: command), privacy: .public) hover=\(squeeze.hoverPose != nil, privacy: .public)")
+        performPencil(command, at: squeeze.hoverPose?.location)
     }
 
     func performPencil(_ command: PencilCommand, at hover: CGPoint?) {
