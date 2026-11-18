@@ -270,4 +270,22 @@ struct MetalRendererTests {
         for _ in 0..<100 where renderer.presentedFrames == 0 { try await Task.sleep(for: .milliseconds(20)) }
         #expect(renderer.presentedFrames > 0)
     }
+
+    /// Rotation: the drawable must follow the new bounds, otherwise the old-aspect texture is stretched
+    /// onto the rotated layer and the canvas looks squashed.
+    @Test func drawableFollowsBoundsAfterRotation() throws {
+        let controller = CanvasViewController(model: CanvasModel())
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        window.rootViewController = controller
+        window.isHidden = false
+        defer { window.isHidden = true }
+        let surface = try #require(controller.view as? MTKView)
+        window.layoutIfNeeded()
+        window.frame = CGRect(x: 0, y: 0, width: 300, height: 400)
+        window.layoutIfNeeded()
+        let scale = surface.contentScaleFactor
+        #expect(surface.bounds.size == CGSize(width: 300, height: 400))
+        #expect(surface.drawableSize == CGSize(width: 300 * scale, height: 400 * scale))
+        #expect((surface.layer as? CAMetalLayer)?.drawableSize == surface.drawableSize)
+    }
 }

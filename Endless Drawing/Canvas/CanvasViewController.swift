@@ -157,6 +157,17 @@ final class CanvasViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // MTKView only pushes its drawableSize to the layer from its own draw loop, which is off (the
+        // CAMetalDisplayLink is the frame source): without this the layer kept the pre-rotation size and
+        // the old-aspect drawable was stretched onto the rotated bounds.
+        if let layer = surface.layer as? CAMetalLayer {
+            let scale = surface.contentScaleFactor
+            let size = CGSize(width: (surface.bounds.width * scale).rounded(), height: (surface.bounds.height * scale).rounded())
+            if size.width > 0, size.height > 0, layer.drawableSize != size {
+                layer.drawableSize = size
+                renderer?.mtkView(surface, drawableSizeWillChange: size)
+            }
+        }
         if previousSize != surface.bounds.size {
             cancelGesture()
             lastPencilPoint = nil // stale after resize/rotation
