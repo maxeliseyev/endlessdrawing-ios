@@ -1,0 +1,187 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Canvas" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Холст"
+          }
+        }
+      }
+    },
+    "Canvas unavailable" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Холст недоступен"
+          }
+        }
+      }
+    },
+    "Close" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрыть"
+          }
+        }
+      }
+    },
+    "Close tools" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрыть инструменты"
+          }
+        }
+      }
+    },
+    "Local prototype — drawings are not saved or shared." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальный прототип — рисунки не сохраняются и не передаются другим."
+          }
+        }
+      }
+    },
+    "Metal is unavailable on this device." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Metal недоступен на этом устройстве."
+          }
+        }
+      }
+    },
+    "Not enough graphics memory. Try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недостаточно графической памяти. Попробуйте ещё раз."
+          }
+        }
+      }
+    },
+    "Opacity" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Непрозрачность"
+          }
+        }
+      }
+    },
+    "Reset view" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сбросить вид"
+          }
+        }
+      }
+    },
+    "Retry" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Повторить"
+          }
+        }
+      }
+    },
+    "Round brush" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Круглая кисть"
+          }
+        }
+      }
+    },
+    "Shared canvas is not connected yet." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключение к общему холсту ещё не реализовано."
+          }
+        }
+      }
+    },
+    "The canvas could not be rendered." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось отрисовать холст."
+          }
+        }
+      }
+    },
+    "The local prototype is full. Undo a stroke to continue." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Локальный прототип заполнен. Отмените штрих, чтобы продолжить."
+          }
+        }
+      }
+    },
+    "This stroke exceeds the drawing limits." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот штрих превышает допустимые размеры."
+          }
+        }
+      }
+    },
+    "Tools" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструменты"
+          }
+        }
+      }
+    },
+    "Undo" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отменить"
+          }
+        }
+      }
+    },
+    "Width" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Толщина"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

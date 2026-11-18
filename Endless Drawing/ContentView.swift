@@ -1,61 +1,32 @@
-//
-//  ContentView.swift
-//  Endless drawing
-//
-//  Created by Maxim Eliseyev on 18.11.2026.
-//
-
 import SwiftUI
-import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @State private var model = CanvasModel()
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
+        ZStack {
+            CanvasRepresentable(model: model).ignoresSafeArea()
+            if let anchor = model.paletteAnchor {
+                GeometryReader { geometry in
+                    let width = min(320, max(1, geometry.size.width - 32))
+                    let height = min(440, max(1, geometry.size.height - 32))
+                    let localAnchor = CGPoint(x: anchor.x - geometry.safeAreaInsets.leading,
+                                              y: anchor.y - geometry.safeAreaInsets.top)
+                    Color.clear.contentShape(Rectangle()).ignoresSafeArea()
+                        .onTapGesture { model.paletteAnchor = nil }
+                    ContextPalette(model: model)
+                        .frame(width: width, height: height)
+                        .position(x: min(max(localAnchor.x, width / 2 + 16), geometry.size.width - width / 2 - 16),
+                                  y: min(max(localAnchor.y, height / 2 + 16), geometry.size.height - height / 2 - 16))
                 }
             }
-        } detail: {
-            Text("Select an item")
         }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
-        }
+        .preferredColorScheme(.light)
+        .alert("Canvas unavailable", isPresented: Binding(get: { model.failure != nil }, set: { if !$0 { model.failure = nil } })) {
+            Button("Retry") { model.failure = nil; model.command?(.retry) }
+            Button("Close", role: .cancel) { model.failure = nil }
+        } message: { Text(model.failure ?? "") }
     }
 }
 
-#Preview {
-    ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
-}
+#Preview { ContentView() }

@@ -6,8 +6,19 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		ED000000000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BF538EBF30AD8E4D00DD7A05 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BF538EC630AD8E4D00DD7A05;
+			remoteInfo = "Endless Drawing";
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		BF538EC730AD8E4D00DD7A05 /* Endless Drawing.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Endless Drawing.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		ED0000000000000000000002 /* Endless DrawingTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = "Endless DrawingTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +27,20 @@
 			path = "Endless Drawing";
 			sourceTree = "<group>";
 		};
+		ED0000000000000000000003 /* Endless DrawingTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Endless DrawingTests";
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		BF538EC430AD8E4D00DD7A05 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		ED0000000000000000000005 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
 			);
@@ -31,6 +52,7 @@
 			isa = PBXGroup;
 			children = (
 				BF538EC930AD8E4D00DD7A05 /* Endless Drawing */,
+				ED0000000000000000000003 /* Endless DrawingTests */,
 				BF538EC830AD8E4D00DD7A05 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -39,6 +61,7 @@
 			isa = PBXGroup;
 			children = (
 				BF538EC730AD8E4D00DD7A05 /* Endless Drawing.app */,
+				ED0000000000000000000002 /* Endless DrawingTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -64,6 +87,27 @@
 			productReference = BF538EC730AD8E4D00DD7A05 /* Endless Drawing.app */;
 			productType = "com.apple.product-type.application";
 		};
+		ED0000000000000000000001 /* Endless DrawingTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ED0000000000000000000008 /* Build configuration list for PBXNativeTarget "Endless DrawingTests" */;
+			buildPhases = (
+				ED0000000000000000000004 /* Sources */,
+				ED0000000000000000000005 /* Frameworks */,
+				ED0000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				ED000000000000000000000C /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				ED0000000000000000000003 /* Endless DrawingTests */,
+			);
+			name = "Endless DrawingTests";
+			productName = "Endless DrawingTests";
+			productReference = ED0000000000000000000002 /* Endless DrawingTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -85,6 +129,7 @@
 			knownRegions = (
 				en,
 				Base,
+				ru,
 			);
 			mainGroup = BF538EBE30AD8E4D00DD7A05;
 			minimizedProjectReferenceProxies = 1;
@@ -94,12 +139,18 @@
 			projectRoot = "";
 			targets = (
 				BF538EC630AD8E4D00DD7A05 /* Endless Drawing */,
+				ED0000000000000000000001 /* Endless DrawingTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		BF538EC530AD8E4D00DD7A05 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		ED0000000000000000000006 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -112,7 +163,20 @@
 			files = (
 			);
 		};
+		ED0000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		ED000000000000000000000C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BF538EC630AD8E4D00DD7A05 /* Endless Drawing */;
+			targetProxy = ED000000000000000000000B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		BF538ED230AD8E4D00DD7A05 /* Debug configuration for PBXProject "Endless Drawing" */ = {
@@ -176,6 +240,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
 			};
 			name = Debug;
 		};
@@ -232,6 +297,7 @@
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
@@ -242,12 +308,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = PK2473XF3P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Configuration/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Endless Drawing";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -257,7 +324,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.endlessdrawing;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -280,12 +347,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = PK2473XF3P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Configuration/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Endless Drawing";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -295,7 +363,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.endlessdrawing;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -309,6 +377,42 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Release;
+		};
+		ED0000000000000000000009 /* Debug configuration for PBXNativeTarget "Endless DrawingTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = PK2473XF3P;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.endlessdrawing.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Endless Drawing.app/Endless Drawing";
+			};
+			name = Debug;
+		};
+		ED000000000000000000000A /* Release configuration for PBXNativeTarget "Endless DrawingTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = PK2473XF3P;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
+				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.endlessdrawing.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Endless Drawing.app/Endless Drawing";
 			};
 			name = Release;
 		};
@@ -328,6 +432,14 @@
 			buildConfigurations = (
 				BF538ED530AD8E4D00DD7A05 /* Debug configuration for PBXNativeTarget "Endless Drawing" */,
 				BF538ED630AD8E4D00DD7A05 /* Release configuration for PBXNativeTarget "Endless Drawing" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		ED0000000000000000000008 /* Build configuration list for PBXNativeTarget "Endless DrawingTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ED0000000000000000000009 /* Debug configuration for PBXNativeTarget "Endless DrawingTests" */,
+				ED000000000000000000000A /* Release configuration for PBXNativeTarget "Endless DrawingTests" */,
 			);
 			defaultConfigurationName = Release;
 		};
