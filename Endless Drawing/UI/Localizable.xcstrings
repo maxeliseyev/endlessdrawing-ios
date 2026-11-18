@@ -1,6 +1,26 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "A drawing could not be stored locally. It is still in memory; retry before closing the app." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось записать рисунок на iPad. Он пока только в памяти; повторите запись до закрытия приложения."
+          }
+        }
+      }
+    },
+    "Brush" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кисть"
+          }
+        }
+      }
+    },
     "Canvas" : {
       "localizations" : {
         "ru" : {
@@ -17,6 +37,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Холст недоступен"
+          }
+        }
+      }
+    },
+    "Chisel" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перо"
           }
         }
       }
@@ -41,12 +71,72 @@
         }
       }
     },
+    "Connecting to shared canvas…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключаемся к общему холсту…"
+          }
+        }
+      }
+    },
+    "Connection paused. Open tools to retry." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключение приостановлено. Повторите через инструменты."
+          }
+        }
+      }
+    },
+    "Drawing storage could not be opened. Your existing identity and pending drawings have not been replaced." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось открыть хранилище. Существующий ключ владельца и очередь рисунков не заменены."
+          }
+        }
+      }
+    },
+    "Loading shared canvas…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загружаем общий холст…"
+          }
+        }
+      }
+    },
     "Local prototype — drawings are not saved or shared." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Локальный прототип — рисунки не сохраняются и не передаются другим."
+          }
+        }
+      }
+    },
+    "Local storage failed — unsaved drafts are only in memory. Retry before closing the app." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ошибка хранилища — незаписанные рисунки только в памяти. Повторите запись до закрытия приложения."
+          }
+        }
+      }
+    },
+    "Local storage is unavailable. Retry to open it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Хранилище недоступно. Повторите открытие."
           }
         }
       }
@@ -71,12 +161,63 @@
         }
       }
     },
+    "Offline — pending drawings remain on this iPad." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет соединения — неотправленные рисунки остаются на этом iPad."
+          }
+        }
+      }
+    },
     "Opacity" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Непрозрачность"
+          }
+        }
+      }
+    },
+    "Opening local drawing storage…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открываем локальную очередь…"
+          }
+        }
+      }
+    },
+    "Pending operations: %lld" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидают отправки: %lld"
+          }
+        }
+      }
+    },
+    "Pending storage is full. Wait or undo a stroke." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Очередь заполнена. Подождите или отмените штрих."
+          }
+        }
+      }
+    },
+    "Reconnect" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переподключить"
           }
         }
       }
@@ -101,7 +242,18 @@
         }
       }
     },
+    "Round" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Круг"
+          }
+        }
+      }
+    },
     "Round brush" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -111,13 +263,32 @@
         }
       }
     },
-    "Shared canvas is not connected yet." : {
-      "extractionState" : "stale",
+    "Shared canvas" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Подключение к общему холсту ещё не реализовано."
+            "value" : "Общий холст"
+          }
+        }
+      }
+    },
+    "Spray" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спрей"
+          }
+        }
+      }
+    },
+    "Square" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Квадрат"
           }
         }
       }
@@ -138,6 +309,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Локальный прототип заполнен. Отмените штрих, чтобы продолжить."
+          }
+        }
+      }
+    },
+    "The server rejected a drawing operation. It was not saved as a new stroke." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер отклонил операцию. Новый штрих не сохранён на сервере."
+          }
+        }
+      }
+    },
+    "This area is too dense. Zoom in to continue." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В этой области слишком много рисунков. Приблизьте холст."
           }
         }
       }

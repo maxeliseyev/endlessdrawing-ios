@@ -50,6 +50,24 @@ struct GeometryTests {
         #expect(b.origin == offset)
     }
 
+    @Test func realGeometryPrefixMatchesIndependentBuildWithoutPredictions() throws {
+        // Include a duplicate at the boundary: counts must describe actual emitted vertices, not point count.
+        let points = [WorldPoint.zero, WorldPoint(x: 12, y: 0), WorldPoint(x: 12, y: 0), WorldPoint(x: 30, y: 20)]
+        let stroke = LocalStroke(id: UUID(), points: points, style: BrushStyle())
+        for realPointCount in 1...points.count {
+            let preview = try #require(RoundGeometry.prepare(stroke, realPointCount: realPointCount))
+            let realStroke = LocalStroke(id: stroke.id, points: Array(points.prefix(realPointCount)), style: stroke.style)
+            let real = try #require(RoundGeometry.prepare(realStroke))
+            #expect(Array(preview.triangles.prefix(preview.realTriangleCount)) == real.triangles)
+            #expect(preview.realCircleCount == real.circles.count)
+            #expect(Array(preview.circles.prefix(preview.realCircleCount)).map(\.center) == real.circles.map(\.center))
+            #expect(real.realTriangleCount == real.triangles.count)
+            #expect(real.realCircleCount == real.circles.count)
+        }
+        #expect(RoundGeometry.prepare(stroke, realPointCount: 0) == nil)
+        #expect(RoundGeometry.prepare(stroke, realPointCount: points.count + 1) == nil)
+    }
+
     @Test func emptyAndInvalidGeometryIsRejected() {
         #expect(RoundGeometry.prepare(LocalStroke(id: UUID(), points: [], style: BrushStyle())) == nil)
         #expect(RoundGeometry.prepare(LocalStroke(id: UUID(), points: [WorldPoint(x: .infinity, y: 0)], style: BrushStyle())) == nil)

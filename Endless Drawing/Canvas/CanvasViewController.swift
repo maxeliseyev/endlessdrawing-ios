@@ -28,7 +28,19 @@ final class CanvasViewController: UIViewController {
     private var gpuStrokes: [UUID: MetalRenderer.GPUStroke] = [:]
     private var finalTasks: [UUID: Task<Void, Never>] = [:]
     private var previewTask: Task<Void, Never>?
-    private var pendingPreview: LocalStroke?
+    private var pendingPreview: (stroke: LocalStroke, realPointCount: Int)?
+    private enum PersistAction { case create(LocalStroke), undo }
+    private var volatileStrokes: [LocalStroke] = []
+    private var persistenceQueue: [PersistAction] = []
+    private var persistenceTask: Task<Void, Never>?
+    private var sceneGeometryTask: Task<Void, Never>?
+    private var sharedState: WorldRenderState?
+    private var strokeExtents: [UUID: StrokeExtent] = [:]
+    private var renderBudgetBlocked = false
+    private var viewportTask: Task<Void, Never>?
+    private var viewportToSend: (Camera, CanvasSize)?
+    private var lastViewportCamera: Camera?
+    private var lastViewportSize: CanvasSize?
     private var activeObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
     private var memoryObserver: NSObjectProtocol?
@@ -65,6 +77,8 @@ final class CanvasViewController: UIViewController {
         super.viewDidLoad()
         configureRenderer()
         model.command = { [weak self] command in self?.perform(command) }
+        model.onWorld = { [weak self] state in self?.applyShared(state) }
+        model.onCamera = { [weak self] next in self?.camera = next; self?.requestFrame() }
         let secondaryClick = UITapGestureRecognizer(target: self, action: #selector(secondaryClick(_:)))
         secondaryClick.buttonMaskRequired = .secondary
         surface.addGestureRecognizer(secondaryClick)
@@ -77,13 +91,17 @@ final class CanvasViewController: UIViewController {
                                                                object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.renderer?.isRenderingEnabled = false
+                self?.sceneGeometryTask?.cancel()
                 self?.cancelGesture()
+                self?.model.deactivate()
             }
         }
         foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
                                                                     object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.renderer?.isRenderingEnabled = true
+                self?.model.activate()
+                self?.drainPersistence()
                 self?.requestFrame()
             }
         }
@@ -95,13 +113,17 @@ final class CanvasViewController: UIViewController {
             }
         }
         becomeFirstResponder()
+        model.activate()
+        if let state = model.worldState { applyShared(state) }
         requestFrame()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         renderer?.isRenderingEnabled = false
+        sceneGeometryTask?.cancel()
         cancelGesture()
+        model.deactivate()
         if let activeObserver { NotificationCenter.default.removeObserver(activeObserver) }
         if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
         if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
@@ -145,7 +167,9 @@ final class CanvasViewController: UIViewController {
               renderer?.isRenderingEnabled == true, viewport.isValid else { return }
         // Handle Pencil first even when UIKit batches direct and Pencil touches together.
         for touch in touches where touch.type == .pencil {
-            guard pencilID == nil else { continue }
+            guard pencilID == nil, model.canDraw,
+                  !model.isShared || (sharedState?.pendingCount ?? 0) + volatileStrokes.count < 64 else { continue }
+            model.userInteracted(camera: camera)
             longPress?.cancel()
             navigation.blockUntilTouchesEnd()
             pencilID = ObjectIdentifier(touch)
@@ -153,6 +177,7 @@ final class CanvasViewController: UIViewController {
             updatePreview()
         }
         for touch in touches where touch.type == .direct {
+            model.userInteracted(camera: camera)
             nextFingerID += 1
             fingerIDs[ObjectIdentifier(touch)] = nextFingerID
             navigation.begin(id: nextFingerID, point: screen(touch), camera: camera)
@@ -176,6 +201,7 @@ final class CanvasViewController: UIViewController {
                 if let origin = longPressOrigin, origin.distance(to: point) > 10 { longPress?.cancel() }
                 if pencilID == nil, let next = navigation.move(id: id, point: point, viewport: viewport) {
                     camera = next
+                    model.userInteracted(camera: camera)
                     requestFrame()
                 }
             }
@@ -221,36 +247,68 @@ final class CanvasViewController: UIViewController {
     }
 
     private func updatePreview() {
-        pendingPreview = input.preview
+        guard let stroke = input.preview else { return }
+        pendingPreview = (stroke, input.realPoints.count)
         guard previewTask == nil else { return }
         previewTask = Task { [weak self] in
             guard let self else { return }
             while let next = pendingPreview {
                 pendingPreview = nil
-                let prepared = await worker.prepare(next)
-                guard input.id == next.id, let prepared else { continue }
-                do { renderer?.preview = try renderer?.upload(prepared) }
-                catch { model.failure = error.localizedDescription }
-                requestFrame()
+                let prepared = await worker.prepare(next.stroke, realPointCount: next.realPointCount)
+                guard let prepared, let renderer else { continue }
+                do {
+                    if input.id == next.stroke.id {
+                        renderer.preview = try renderer.upload(prepared)
+                        requestFrame()
+                    } else if finalTasks[next.stroke.id] != nil, gpuStrokes[next.stroke.id] == nil,
+                              localStrokes.contains(where: { $0.id == next.stroke.id }) {
+                        // Pencil may lift before the first preview job returns. Publish only its real prefix;
+                        // never resurrect a cancelled/undone stroke or replace a newer final buffer.
+                        guard canUpload(prepared) else { continue }
+                        gpuStrokes[next.stroke.id] = try renderer.upload(prepared).withoutPredictions
+                        synchronizeStrokes()
+                    }
+                } catch { model.failure = error.localizedDescription }
             }
             previewTask = nil
         }
     }
 
-    private func complete(_ stroke: LocalStroke) {
-        // Bounded debug document, not a disk-backed or server-confirmed world.
-        guard localStrokes.count < 256,
-              localStrokes.reduce(0, { $0 + $1.points.count }) + stroke.points.count <= 100_000 else {
-            model.failure = String(localized: "The local prototype is full. Undo a stroke to continue.")
-            return
+    /// Accept an input-finalized stroke; visible real geometry must survive the asynchronous final build.
+    func complete(_ stroke: LocalStroke) {
+        if model.isShared {
+            guard volatileStrokes.count < 64 else {
+                model.failure = String(localized: "Pending storage is full. Wait or undo a stroke.")
+                return
+            }
+            // Visible immediately, but not durable/server-saved until the respective transactions finish.
+            volatileStrokes.append(stroke)
+            rebuildSharedScene()
+            persistenceQueue.append(.create(stroke))
+            drainPersistence()
+        } else {
+            guard localStrokes.count < 256,
+                  localStrokes.reduce(0, { $0 + $1.points.count }) + stroke.points.count <= 100_000 else {
+                model.failure = String(localized: "The local prototype is full. Undo a stroke to continue.")
+                return
+            }
+            localStrokes.append(stroke)
         }
-        localStrokes.append(stroke)
         model.canUndo = true
+        if let preview = renderer?.preview, preview.id == stroke.id, canRetain(preview) {
+            // Transfer the visible real geometry and remove prediction-only vertices in one main-actor turn.
+            // The final worker replaces this buffer later; a new Pencil gesture cannot overwrite the handoff.
+            gpuStrokes[stroke.id] = preview.withoutPredictions
+            renderer?.preview = nil
+            synchronizeStrokes()
+        }
         finalTasks[stroke.id] = Task { [weak self, worker] in
             let prepared = await worker.prepare(stroke)
-            guard let self, !Task.isCancelled, localStrokes.contains(where: { $0.id == stroke.id }), let prepared else { return }
+            guard let self else { return }
             defer { finalTasks[stroke.id] = nil }
+            guard !Task.isCancelled, localStrokes.contains(where: { $0.id == stroke.id }), let prepared else { return }
             do {
+                guard canUpload(prepared) else { return }
                 gpuStrokes[stroke.id] = try renderer?.upload(prepared)
                 synchronizeStrokes()
             } catch { model.failure = error.localizedDescription }
@@ -265,6 +323,115 @@ final class CanvasViewController: UIViewController {
     private func requestFrame() {
         renderer?.camera = camera
         surface?.setNeedsDisplay()
+        guard model.isShared, viewport.isValid,
+              camera != lastViewportCamera || viewport != lastViewportSize else { return }
+        lastViewportCamera = camera; lastViewportSize = viewport
+        viewportToSend = (camera, viewport)
+        guard viewportTask == nil else { return }
+        viewportTask = Task { [weak self] in
+            guard let self else { return }
+            while let (next, size) = viewportToSend {
+                viewportToSend = nil
+                await model.viewportChanged(camera: next, viewport: size)
+                do { try await Task.sleep(for: .milliseconds(16)) } catch { break }
+            }
+            viewportTask = nil
+        }
+    }
+
+    private func applyShared(_ state: WorldRenderState) {
+        guard state.revision > (sharedState?.revision ?? 0) else { return }
+        sharedState = state
+        rebuildSharedScene()
+    }
+
+    private func rebuildSharedScene() {
+        let previous = Set(localStrokes.map(\.id))
+        var ids: Set<UUID> = []
+        let hidden = sharedState?.hidden ?? []
+        for record in sharedState?.confirmed ?? [] { strokeExtents[record.drawable.id] = record.extent }
+        let strokes = (sharedState?.confirmed.map(\.drawable) ?? []) + (sharedState?.pending ?? []) + volatileStrokes
+        let bounds = try? CanvasRegion(camera: camera, viewport: viewport).rendering
+        localStrokes = strokes.filter { stroke in
+            guard !hidden.contains(stroke.id), ids.insert(stroke.id).inserted else { return false }
+            let extent = strokeExtents[stroke.id] ?? StrokeExtent(stroke)
+            strokeExtents[stroke.id] = extent
+            return bounds.map { extent.intersects($0) } ?? true
+        }
+        let wanted = Set(localStrokes.map(\.id))
+        if wanted != previous { renderBudgetBlocked = false; model.graphicsLimited = false }
+        gpuStrokes = gpuStrokes.filter { wanted.contains($0.key) }
+        strokeExtents = strokeExtents.filter { wanted.contains($0.key) }
+        model.canUndo = (sharedState?.canUndo ?? false) || !volatileStrokes.isEmpty
+        synchronizeStrokes()
+        prepareSharedGeometry()
+    }
+
+    private func prepareSharedGeometry() {
+        guard sceneGeometryTask == nil, !renderBudgetBlocked else { return }
+        sceneGeometryTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                sceneGeometryTask = nil
+                if Task.isCancelled, renderer?.isRenderingEnabled == true { prepareSharedGeometry() }
+            }
+            if localStrokes.count > 2000 { graphicsBudgetExceeded(); return }
+            while let stroke = localStrokes.first(where: { self.gpuStrokes[$0.id] == nil && self.finalTasks[$0.id] == nil }) {
+                let prepared = await worker.prepare(stroke)
+                guard !Task.isCancelled else { return }
+                guard localStrokes.contains(where: { $0.id == stroke.id }), let prepared else { continue }
+                guard let renderer else { return }
+                guard canUpload(prepared) else { return }
+                do { gpuStrokes[stroke.id] = try renderer.upload(prepared); synchronizeStrokes() }
+                catch { model.failure = String(localized: "Not enough graphics memory. Try again."); return }
+            }
+        }
+    }
+
+    private func canRetain(_ stroke: MetalRenderer.GPUStroke) -> Bool {
+        guard model.isShared else { return true }
+        let used = gpuStrokes.values.filter { $0.id != stroke.id }.reduce(0) { $0 + ($1.triangles?.length ?? 0) + ($1.circles?.length ?? 0) }
+        guard used + (stroke.triangles?.length ?? 0) + (stroke.circles?.length ?? 0) <= 64 * 1024 * 1024 else {
+            graphicsBudgetExceeded(); return false
+        }
+        return true
+    }
+
+    private func canUpload(_ prepared: PreparedStroke) -> Bool {
+        guard model.isShared else { return true }
+        let bytes = prepared.triangles.count * MemoryLayout<SIMD2<Float>>.stride + prepared.circles.count * MemoryLayout<CircleInstance>.stride
+        let used = gpuStrokes.values.filter { $0.id != prepared.id }.reduce(0) { $0 + ($1.triangles?.length ?? 0) + ($1.circles?.length ?? 0) }
+        guard used + bytes <= 64 * 1024 * 1024 else { graphicsBudgetExceeded(); return false }
+        return true
+    }
+
+    private func graphicsBudgetExceeded() {
+        if !renderBudgetBlocked { model.failure = String(localized: "This area is too dense. Zoom in to continue.") }
+        renderBudgetBlocked = true; model.graphicsLimited = true
+    }
+
+    private func drainPersistence() {
+        guard model.isShared, persistenceTask == nil, !persistenceQueue.isEmpty else { return }
+        persistenceTask = Task { [weak self] in
+            guard let self else { return }
+            defer { persistenceTask = nil }
+            while let action = persistenceQueue.first {
+                do {
+                    switch action {
+                    case .create(let stroke):
+                        try await model.persist(stroke)
+                        volatileStrokes.removeAll { $0.id == stroke.id }
+                    case .undo: try await model.undoShared()
+                    }
+                    persistenceQueue.removeFirst()
+                    rebuildSharedScene()
+                } catch {
+                    // Keep the failed action and its visible RAM draft, never claim it survived a restart.
+                    model.failure = String(localized: "A drawing could not be stored locally. It is still in memory; retry before closing the app.")
+                    return
+                }
+            }
+        }
     }
 
     private func updateFrameLoop() {
@@ -282,6 +449,7 @@ final class CanvasViewController: UIViewController {
                   navigation.touches.count == 1,
                   let current = navigation.touches.values.first, current.distance(to: point) <= 10 else { return }
             camera = initialCamera
+            model.userInteracted(camera: camera)
             showTools(at: CGPoint(x: point.x, y: point.y))
         }
     }
@@ -295,6 +463,9 @@ final class CanvasViewController: UIViewController {
         cancelGesture()
         switch command {
         case .undo:
+            if model.isShared {
+                persistenceQueue.append(.undo); drainPersistence(); return
+            }
             guard let stroke = localStrokes.popLast() else { return }
             finalTasks.removeValue(forKey: stroke.id)?.cancel()
             gpuStrokes[stroke.id] = nil
@@ -302,10 +473,15 @@ final class CanvasViewController: UIViewController {
             synchronizeStrokes()
         case .resetCamera:
             camera = Camera()
+            model.userInteracted(camera: camera)
             requestFrame()
         case .retry:
             if renderer == nil { configureRenderer() }
             renderer?.releaseTargets()
+            renderBudgetBlocked = false; model.graphicsLimited = false
+            model.retryConnection()
+            drainPersistence()
+            prepareSharedGeometry()
             requestFrame()
         }
     }

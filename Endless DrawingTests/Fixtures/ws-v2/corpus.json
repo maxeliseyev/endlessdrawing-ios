@@ -1,0 +1,354 @@
+[
+  {
+    "name": "hello",
+    "value": {
+      "type": "hello",
+      "session_secret": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"
+    }
+  },
+  {
+    "name": "welcome",
+    "value": {
+      "type": "hello.ack",
+      "protocol_version": 2,
+      "spawn": {
+        "x": 999999999.125,
+        "y": -999999999.0625
+      }
+    }
+  },
+  {
+    "name": "welcome-empty",
+    "value": {
+      "type": "hello.ack",
+      "protocol_version": 2
+    }
+  },
+  {
+    "name": "subscribe",
+    "value": {
+      "type": "viewport.subscribe",
+      "subscription_id": "view-1",
+      "bounds": {
+        "min_x": -100.125,
+        "min_y": -200.25,
+        "max_x": 100.125,
+        "max_y": 200.25
+      }
+    }
+  },
+  {
+    "name": "snapshot-begin",
+    "value": {
+      "type": "viewport.snapshot.begin",
+      "subscription_id": "view-1"
+    }
+  },
+  {
+    "name": "snapshot-end",
+    "value": {
+      "type": "viewport.snapshot.end",
+      "subscription_id": "view-1"
+    }
+  },
+  {
+    "name": "snapshot-chunk",
+    "value": {
+      "type": "viewport.snapshot.chunk",
+      "subscription_id": "view-1",
+      "strokes": [
+        {
+          "id": "87a122fa-7537-4b88-9b77-b45d24a29714",
+          "points": [
+            [
+              999999999.125,
+              -999999999.0625
+            ],
+            [
+              -1.125,
+              2.0625
+            ]
+          ],
+          "brush": "round",
+          "width": 6.25,
+          "color": "#AABBCC",
+          "opacity": 0.125,
+          "seq": 9007199254740991,
+          "own": false
+        },
+        {
+          "id": "87a122fa-7537-4b88-9b77-b45d24a29714",
+          "points": [
+            [
+              999999999.125,
+              -999999999.0625
+            ],
+            [
+              -1.125,
+              2.0625
+            ]
+          ],
+          "brush": "square",
+          "width": 6.25,
+          "color": "#AABBCC",
+          "opacity": 0.125,
+          "seq": 9007199254740991,
+          "own": false
+        },
+        {
+          "id": "87a122fa-7537-4b88-9b77-b45d24a29714",
+          "points": [
+            [
+              999999999.125,
+              -999999999.0625
+            ],
+            [
+              -1.125,
+              2.0625
+            ]
+          ],
+          "brush": "chisel",
+          "width": 6.25,
+          "color": "#AABBCC",
+          "opacity": 0.125,
+          "seq": 9007199254740991,
+          "own": false
+        },
+        {
+          "id": "87a122fa-7537-4b88-9b77-b45d24a29714",
+          "points": [
+            [
+              999999999.125,
+              -999999999.0625
+            ],
+            [
+              -1.125,
+              2.0625
+            ]
+          ],
+          "brush": "spray",
+          "width": 6.25,
+          "color": "#AABBCC",
+          "opacity": 0.125,
+          "seq": 9007199254740991,
+          "own": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "create",
+    "value": {
+      "type": "stroke.create",
+      "request_id": "request-1",
+      "stroke": {
+        "id": "87a122fa-7537-4b88-9b77-b45d24a29714",
+        "points": [
+          [
+            999999999.125,
+            -999999999.0625
+          ],
+          [
+            -1.125,
+            2.0625
+          ]
+        ],
+        "brush": "round",
+        "width": 6.25,
+        "color": "#AABBCC",
+        "opacity": 0.125
+      }
+    }
+  },
+  {
+    "name": "delete",
+    "value": {
+      "type": "stroke.delete",
+      "request_id": "request-2",
+      "stroke_id": "87a122fa-7537-4b88-9b77-b45d24a29714"
+    }
+  },
+  {
+    "name": "create-ack",
+    "value": {
+      "type": "ack",
+      "request_id": "request-1",
+      "operation": "stroke.create",
+      "stroke": {
+        "id": "87a122fa-7537-4b88-9b77-b45d24a29714",
+        "points": [
+          [
+            999999999.125,
+            -999999999.0625
+          ],
+          [
+            -1.125,
+            2.0625
+          ]
+        ],
+        "brush": "round",
+        "width": 6.25,
+        "color": "#AABBCC",
+        "opacity": 0.125,
+        "seq": 9007199254740991,
+        "own": true
+      }
+    }
+  },
+  {
+    "name": "delete-ack",
+    "value": {
+      "type": "ack",
+      "request_id": "request-2",
+      "operation": "stroke.delete",
+      "stroke_id": "87a122fa-7537-4b88-9b77-b45d24a29714",
+      "seq": 9007199254740991,
+      "already_deleted": false
+    }
+  },
+  {
+    "name": "delete-again-ack",
+    "value": {
+      "type": "ack",
+      "request_id": "request-2",
+      "operation": "stroke.delete",
+      "stroke_id": "87a122fa-7537-4b88-9b77-b45d24a29714",
+      "seq": 9007199254740991,
+      "already_deleted": true
+    }
+  },
+  {
+    "name": "created",
+    "value": {
+      "type": "stroke.created",
+      "subscription_id": "view-1",
+      "stroke": {
+        "id": "87a122fa-7537-4b88-9b77-b45d24a29714",
+        "points": [
+          [
+            999999999.125,
+            -999999999.0625
+          ],
+          [
+            -1.125,
+            2.0625
+          ]
+        ],
+        "brush": "round",
+        "width": 6.25,
+        "color": "#AABBCC",
+        "opacity": 0.125,
+        "seq": 9007199254740991,
+        "own": false
+      }
+    }
+  },
+  {
+    "name": "deleted",
+    "value": {
+      "type": "stroke.deleted",
+      "subscription_id": "view-1",
+      "stroke_id": "87a122fa-7537-4b88-9b77-b45d24a29714",
+      "seq": 9007199254740991
+    }
+  },
+  {
+    "name": "error-invalid_message",
+    "value": {
+      "type": "error",
+      "code": "invalid_message",
+      "message": "Synthetic fixture error",
+      "request_id": "request-1"
+    }
+  },
+  {
+    "name": "error-invalid_session",
+    "value": {
+      "type": "error",
+      "code": "invalid_session",
+      "message": "Synthetic fixture error",
+      "request_id": "request-1"
+    }
+  },
+  {
+    "name": "error-hello_required",
+    "value": {
+      "type": "error",
+      "code": "hello_required",
+      "message": "Synthetic fixture error",
+      "request_id": "request-1"
+    }
+  },
+  {
+    "name": "error-validation_failed",
+    "value": {
+      "type": "error",
+      "code": "validation_failed",
+      "message": "Synthetic fixture error",
+      "request_id": "request-1"
+    }
+  },
+  {
+    "name": "error-forbidden",
+    "value": {
+      "type": "error",
+      "code": "forbidden",
+      "message": "Synthetic fixture error",
+      "request_id": "request-1"
+    }
+  },
+  {
+    "name": "error-not_found",
+    "value": {
+      "type": "error",
+      "code": "not_found",
+      "message": "Synthetic fixture error",
+      "request_id": "request-1"
+    }
+  },
+  {
+    "name": "error-id_conflict",
+    "value": {
+      "type": "error",
+      "code": "id_conflict",
+      "message": "Synthetic fixture error",
+      "request_id": "request-1"
+    }
+  },
+  {
+    "name": "error-stroke_deleted",
+    "value": {
+      "type": "error",
+      "code": "stroke_deleted",
+      "message": "Synthetic fixture error",
+      "request_id": "request-1"
+    }
+  },
+  {
+    "name": "error-rate_limited",
+    "value": {
+      "type": "error",
+      "code": "rate_limited",
+      "message": "Synthetic fixture error",
+      "request_id": "request-1"
+    }
+  },
+  {
+    "name": "error-resync_required",
+    "value": {
+      "type": "error",
+      "code": "resync_required",
+      "message": "Synthetic fixture error",
+      "subscription_id": "view-1"
+    }
+  },
+  {
+    "name": "error-internal_error",
+    "value": {
+      "type": "error",
+      "code": "internal_error",
+      "message": "Synthetic fixture error",
+      "request_id": "request-1"
+    }
+  }
+]

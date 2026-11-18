@@ -33,6 +33,8 @@
 | Повтор этих тестов на M4 Simulator, runtime с меткой iOS 27.0 | 23 PASS |
 | После исправления: Debug + Release, M4 Simulator iOS 27.0 | 24 PASS в каждой конфигурации, включая запуск `MTKView` |
 | После исправления: Release generic iOS device, без подписи | PASS; повторная физическая приёмка владельцем ещё нужна |
+| После исправления мигания Pencil: Debug + Release, M4 Simulator iOS 27.0 | 27 PASS в каждой конфигурации |
+| После исправления мигания Pencil: Release generic iOS device, без подписи | PASS |
 | Swift strict concurrency + warnings as errors | PASS |
 | Test scheme запрашивает `MTL_DEBUG_LAYER=1` | Во время test action; GPU shader validation на устройстве ещё не выполнена |
 | Собранный scene manifest | Single-scene, `UIApplicationSupportsMultipleScenes = false` |
@@ -50,22 +52,24 @@
 
 ### Воспроизведение
 
-Выбрать установленный iPad simulator UUID из `xcrun simctl list devices available`:
+Выбрать установленный iPad simulator UUID из `xcrun simctl list devices available`. Для текущего полного набора с Keychain нужен подписанный Simulator host; исходный M1 без Keychain допускал `CODE_SIGNING_ALLOWED=NO`. См. [M2.1](m2-foundation.md).
 
 ```bash
 IPAD_SIMULATOR_ID='<UUID>'
 xcodebuild -project 'Endless Drawing.xcodeproj' \
   -scheme 'Endless Drawing' -configuration Debug \
   -destination "platform=iOS Simulator,id=$IPAD_SIMULATOR_ID" \
-  -derivedDataPath /tmp/endless-drawing-derived \
-  CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES test
+  -derivedDataPath /tmp/endless-drawing-signed-tests \
+  CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test
 
 xcodebuild -project 'Endless Drawing.xcodeproj' \
   -scheme 'Endless Drawing' -configuration Debug \
   -destination 'generic/platform=iOS' \
   -derivedDataPath /tmp/endless-drawing-device \
-  CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES build
+  CODE_SIGNING_ALLOWED=NO build
 ```
+
+Для текущего проекта с SPM warnings-as-errors заданы в собственных targets, не глобальным CLI override; причина — [M2.2](m2-msgpack-transport.md).
 
 ## Исправление запуска Release
 
@@ -75,9 +79,22 @@ xcodebuild -project 'Endless Drawing.xcodeproj' \
 
 Запуск на iPad подтверждён владельцем, но исправленную сборку и ввод/жесты ещё нужно повторно принять на физическом устройстве. Сервер по-прежнему не подключён.
 
+## Устранение мигания при отпускании Pencil
+
+Владелец подтвердил рисование на физическом iPad и заметил краткое исчезновение штриха после поднятия Pencil. Причина: `ended()` очищал preview сразу, а `complete()` ждал асинхронной подготовки финальной геометрии; между ними renderer мог показать пустую область.
+
+Исправлено для текущей круглой кисти:
+
+- builder отмечает диапазоны mesh/circle buffers, соответствующие только реальным samples, до predicted tail;
+- при завершении эти диапазоны синхронно передаются из preview в локальный документ, без новой тесселяции, upload или ожидания GPU на UI thread;
+- predictions отбрасываются, а реальная геометрия остаётся видимой до атомарной замены на финальную;
+- следующий штрих не затирает ещё финализирующийся; поздний preview не воскрешает отменённый/удалённый через undo ID.
+
+Добавлены 3 регрессии: совпадение реального prefix с независимой тесселяцией (включая дубли точек), несколько кадров после отпускания до выполнения worker, быстрые последовательные strokes с undo и поздней финализацией. GPU-тесты вызывают реальный `CanvasViewController.complete`, проверяют отсутствие blank frame, predicted ink и повторного затемнения opacity. Всего 27 тестов проходят в Debug и Release; Release device build без подписи также проходит. Владелец затем повторно проверил сборку на iPad и подтвердил, что мигание устранено и рисование работает.
+
 ## Что ещё не сделано
 
-- Физическая проверка Pencil/ладони/long press/keyboard/VoiceOver, rotation/lock/Stage Manager и memory pressure.
+- Полная приёмка ладони/long press/keyboard/VoiceOver, rotation/lock/Stage Manager и memory pressure; базовое рисование и отсутствие мигания уже подтверждены владельцем.
 - GPU capture, frame pacing, latency и thermal/battery measurements на iPad. `preferredFramesPerSecond = 120` — запрос, не гарантия.
 - Double-tap, squeeze, hover и полное управление Pencil Pro; это M3, не имитируется наличием обычного Pencil input.
 - WS/Origin handshake, Keychain, outbox, сохранение camera/preferences и восстановление после crash.
@@ -85,4 +102,4 @@ xcodebuild -project 'Endless Drawing.xcodeproj' \
 - World tiles, spatial index, geometry LRU и dense-scene degradation M4.
 - Подпись и повторная проверка исправленного device build, затем TestFlight.
 
-Следующий шаг: запустить Debug на физическом iPad владельца и проверить первый ввод/палитру/плавность. Затем продолжить M2: identity + durable operations и первый общий round-штрих, сохраняя оговорённый gate поддержки всех серверных форм до внешней раздачи клиента.
+После подтверждения исправления владельцем начат [M2.1](m2-foundation.md): протокол, identity и durable operations. Следующий срез — transport/session и подключение общего мира, сохраняя gate поддержки всех серверных форм до внешней раздачи клиента.

@@ -14,10 +14,19 @@ nonisolated struct InkColor: Equatable, Sendable {
         InkColor(red: 173, green: 138, blue: 203)
     ]
 
+    var hex: String { String(format: "#%02X%02X%02X", red, green, blue) }
+
+    init(red: UInt8, green: UInt8, blue: UInt8) { self.red = red; self.green = green; self.blue = blue }
+    init?(hex: String) {
+        guard hex.count == 7, hex.first == "#", let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
+        red = UInt8((value >> 16) & 255); green = UInt8((value >> 8) & 255); blue = UInt8(value & 255)
+    }
+
     var components: SIMD3<Float> { SIMD3(Float(red), Float(green), Float(blue)) / 255 }
 }
 
 nonisolated struct BrushStyle: Equatable, Sendable {
+    var brush = BrushKind.round
     var width = 6.0
     var opacity = 1.0
     var color = InkColor.palette[0]
@@ -26,8 +35,8 @@ nonisolated struct BrushStyle: Equatable, Sendable {
     }
 }
 
-/// Local, immutable round stroke. This is not yet a server-confirmed object.
-nonisolated struct LocalStroke: Identifiable, Sendable {
+/// Immutable drawable geometry; confirmation/ownership belong to the world, not this value.
+nonisolated struct LocalStroke: Identifiable, Equatable, Sendable {
     let id: UUID
     let points: [WorldPoint]
     let style: BrushStyle

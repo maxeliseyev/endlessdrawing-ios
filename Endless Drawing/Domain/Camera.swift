@@ -20,7 +20,7 @@ nonisolated struct CanvasSize: Equatable, Sendable {
 
 nonisolated struct Camera: Equatable, Sendable {
     static let worldLimit = 1_000_000_000.0
-    static let minimumZoom = 0.16
+    static let minimumZoom = 0.08
     static let maximumZoom = 4.0
 
     private(set) var center = WorldPoint.zero

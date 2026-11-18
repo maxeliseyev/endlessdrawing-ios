@@ -1,6 +1,6 @@
 # Архитектура нативного iPad-клиента
 
-Статус: целевая архитектура. Первый локальный срез M1 уже реализован; сеть, identity, outbox, остальные кисти и тайлы ещё не реализованы. Конкретные готовые компоненты и ограничения перечислены в [отчёте M1](progress/m1-local-canvas.md). Принятая основа и этапы: [implementation-plan.md](implementation-plan.md). Числовые бюджеты ниже — начальные настройки для проверки, не измеренные показатели.
+Статус: целевая архитектура с частичной реализацией. В [M2.3](progress/m2-shared-canvas.md) включены общий Canvas, WorldSession/SceneStore, journal/send/ack/undo и все четыре Metal-кисти, поверх M2.1/M2.2. Обычный app entry — production v2/v1; тесты/preview изолированы. Тайлы/LOD, eraser и Pencil Pro gestures ещё не реализованы; physical shared-world/performance acceptance остаётся. Исторический локальный срез — [M1](progress/m1-local-canvas.md). Принятая основа и этапы: [implementation-plan.md](implementation-plan.md). Числовые бюджеты ниже — начальные настройки для проверки, не измеренные показатели.
 
 ## 1. Источники совместимости
 
@@ -14,6 +14,8 @@
 | Камера и prefetch | `../endless-drawing-frontend/src/camera.ts` |
 | Сцена/операции и полезные race cases | `../endless-drawing-frontend/src/scene.ts`, `src/world.ts` |
 | Текущий web GPU pipeline | `../endless-drawing-frontend/docs/webgl.md` |
+| MessagePack v2 M1 | `../endless-drawing-backend/docs/protocol-v2-msgpack.md`, [реализация native](progress/m2-msgpack-transport.md) |
+| Будущие manifest и visible-first | [Нативная адаптация и ссылки на source docs](transport-evolution.md) |
 
 Базовые HEAD при исследовании: iPad `c6f9eee`, frontend `75b59f1`, backend `4103b38`. Во frontend `src/` чист относительно этого HEAD, но прочитанные `docs/product.md` и `docs/webgl.md` имеют локальные изменения; их содержание нельзя приписывать только commit `75b59f1`. В iPad-проекте также есть существующие локальные переименования/настройки.
 
@@ -39,7 +41,7 @@ UIKit / InputMachine    actor              │
                          │
                   WebSocketTransport
                          │
-                   JSON v1 backend
+                   Shared WS backend (v1/v2)
 ```
 
 ### Границы
@@ -48,7 +50,8 @@ UIKit / InputMachine    actor              │
 - `CanvasViewController`: `MTKView`, UIKit touch events, gesture recognizers только для пальцев/secondary click/hover; маршрутизация accessibility-команд.
 - `InputMachine`: детерминированные переходы жестов и сборка активного draft; не знает про socket, Keychain или Metal.
 - `WorldSession` actor: единственный владелец состояния общего мира и последовательности сетевых операций. `SceneStore` и reducer — его синхронные чистые помощники, не отдельные actors с независимым порядком событий.
-- `WebSocketTransport`: один socket, одна receive loop и один последовательный send path. Не изменяет сцену; отдаёт проверенные сообщения строго в порядке получения.
+- `WebSocketTransport`: один socket, одна receive loop и один последовательный send path. Проверяет negotiated profile до hello, не изменяет сцену и отдаёт сообщения строго в порядке получения.
+- `SessionCodec`: отдельная граница Text JSON v1 / Binary MessagePack v2, structural budgets и profile-aware validation. Выбирается один раз на connection generation; не знает про ownership, journal или Metal.
 - `OperationJournal`: последовательная запись локальных транзакций вне main thread; связанный с identity/environment, версионированный bounded outbox и undo.
 - `GeometryBuilder`: чистое построение неизменяемой геометрии, доступное тестам без UIKit/Metal.
 - `MetalRenderer`: единственный владелец mutable GPU-кешей. Для M1 кодирование команд остаётся на main thread и укладывается в небольшой бюджет; тяжёлая геометрия строится workers. Перенос кодирования на serial render executor — только после профилирования, без смены контрактов.
@@ -88,7 +91,7 @@ UIKit / InputMachine    actor              │
 - `screen = (world - camera.center) * zoom + viewportSize / 2`.
 - `world = (screen - viewportSize / 2) / zoom + camera.center`.
 - Для GPU использовать реальный `drawableSize / view.bounds.size`, не предполагать, что он всегда равен `UIScreen.scale`; учитывать отдельно x/y при округлении.
-- Pinch удерживает world-point под исходной серединой пальцев и переносит его к текущей середине. Zoom clamp 0.16...4, center clamp ±1e9.
+- Pinch удерживает world-point под исходной серединой пальцев и переносит его к текущей середине. Zoom clamp 0.08...4 (8–400%, по решению владельца), center clamp ±1e9.
 - Видимая область — из камеры и реального размера canvas. Запрос подписки ограничен 30000 world units по каждой оси; при необычно большом viewport адаптировать минимальный zoom так, чтобы видимая область помещалась в лимит.
 
 ### Точность GPU
@@ -143,7 +146,7 @@ paletteOpen(anchor)
 - Estimated-property updates не должны менять уже завершённый draft; pressure/tilt/roll в v1 не влияют на видимую линию.
 - После sampling применять веб-совместимый bounded append: не добавлять точный дубль, обычный минимум расстояния 0.75 world units, финальную точку сохранять; при 2000 точек прореживать весь путь с сохранением концов, а не отрезать хвост.
 - Пересборка preview допустима при decimation; после finalize payload замораживается навсегда. Нельзя заново фильтровать точки после reconnect.
-- Before enqueue проверять encoded UTF-8 размер всего `stroke.create` с request envelope ≤128 KiB, число точек, style, finite/world и протяжённость ≤100000 по каждой оси до padding. Сервер остаётся окончательным валидатором.
+- Before enqueue сохранять консервативную JSON byte-проверку всего `stroke.create` с request envelope ≤128 KiB, points/style/finite/world/extent limits. Перед send дополнительно проверять bytes фактически выбранного codec. MessagePack не разрешает повысить лимит 2000 points или менять payload после сохранения в journal; сервер остаётся окончательным валидатором.
 - Если stroke не помещается по bytes, детерминированно уменьшить число точек до enqueue и обновить final preview; если всё равно недопустим — явная ошибка. Автоматически резать на несколько create в v1 не будем: это меняет opacity и undo semantics.
 
 ## 5. Pencil Pro и доступ к инструментам
@@ -188,10 +191,11 @@ SwiftUI overlay/popover, а не постоянный toolbar. Сохранит�
 | round | Прямоугольник каждого сегмента + круг radius width/2 в каждой точке | Расстояние до сегмента/точки с учётом радиуса |
 | square | Прямоугольники сегментов, square caps, bevel joins; точка — осевой квадрат | Те же caps/polygons, не круглая аппроксимация |
 | chisel | Наконечник -45°, длина width, толщина max(1,width/6); convex hull двух соседних footprints | Тест реальных sweep polygons |
-| spray | Детерминированные circle instances по алгоритму v1 | Расстояние до реальной частицы, не всего диска width |
+| spray | Детерминированные circle instances по текущему web-алгоритму, без legacy-ветки | План: расстояние до реальной частицы, не всего диска width |
 
 - Bbox padding: round/spray `width/2 + 1`, square/chisel `width/sqrt(2) + 1`; не обрезать геометрию по world limit после расширения.
 - Spray: FNV-1a по lowercase UUID, xorshift32 с wrapping UInt32, fallback seed `0x9e3779b9`; вычисления centers/particles в Double с тем же порядком операций.
+- Решение владельца 18.11.2026: максимальный диаметр частицы **1 world unit вместо 2.5**, включая все сохранённые штрихи, без обратной совместимости. Как в текущем `src/brush-geometry.ts`: radius `max(0.35, min(0.5, width/20))`, диаметр 0.7–1. При zoom=1 это 1 CSS px / 1 UIKit pt максимум, не один физический пиксель; при zoom частицы масштабируются с холстом. Spread `max(0, width/2 - radius)` использует новый радиус; seed, число частиц и шаг прежние. Дополнительных wire-полей, версии кисти или миграции journal нет. Native spray и pinned web fixtures уже используют этот контракт; будущий eraser hit-test обязан использовать те же частицы.
 - Step `max(1,width/4,totalLength/2047)`, ≤2048 stamps, ≤48 частиц/stamp, ≤98304 particles/stroke. Trig не обещает побитовую одинаковость между платформами; проверять численный допуск и визуальный результат.
 - Стиль brush захватывается в начале, UUID назначается до первого preview, поэтому seed preview/ack/snapshot одинаков.
 - Допуск eraser 4 экранных pt переводится в world через zoom. Принимаются только кандидаты `own`; чужая геометрия не скрывается оптимистически.
@@ -270,24 +274,28 @@ SwiftUI overlay/popover, а не постоянный toolbar. Сохранит�
 
 ### Transport
 
+Codec, URLSession transport, application FSM и shared-world entry реализованы в [M2.3](progress/m2-shared-canvas.md). Пакет msgpack-swift exact 2.0.6 + mandatory preflight; lossless float32-shortening trusted output разворачивается в float64, входящий float32 запрещён. JSON-text round-trip нет. Corpus/Swift→frontend interop, настоящий dev backend/Postgres mixed-profile mutation smoke и native read-only production HTTPS/WSS проверены; physical iPad gate остаётся. Подробности — [M2.2](progress/m2-msgpack-transport.md).
+
+Semantic journal хранит payload, не frames: unit test JSON→binary retry сохраняет UUID/geometry, environment/owner и одну undo запись. Keychain/storage namespaces не меняются вместе с wire profile.
+
 - Production `wss://endlessdrawing.com/ws`, origin `https://endlessdrawing.com`; dev задаётся конфигурацией, не постоянным UI-переключателем.
-- `URLSessionWebSocketTask` создаётся из `URLRequest` с одним явным разрешённым `Origin`. Нативная возможность выставить заголовок не делает его authentication; ownership задаёт secret.
+- Один `URLSessionWebSocketTask` с явным разрешённым Origin. Negotiated mode предлагает `endless-drawing.msgpack.v2`, затем `endless-drawing.json.v1`; выбранный профиль проверяется через delegate до hello. Нативная адаптация URLSession, legacy deployment mode и rollout gates — [transport-evolution.md](transport-evolution.md). Origin не является authentication; ownership задаёт secret.
 - Локальный endpoint `ws://127.0.0.1:3000/ws` подходит simulator на Mac; на физическом iPad нужен LAN-адрес Mac/HTTPS-стенд, разрешённый Origin и при необходимости Local Network permission. Loopback iPad не является Mac.
 - ATS/dev exceptions — точечные и только Debug, Release не получает blanket `NSAllowsArbitraryLoads`. Настоящий dev TLS предпочтительнее; никакого trust-all delegate.
 - Не следовать неожиданному cross-host redirect с credentials; endpoint/Origin/identity привязаны к environment. Не логировать request headers, hello или raw frames.
-- Text JSON object на frame; поддержка binary frames не требуется. Receive размер ограничить до decode (рабочий максимум 4 MiB для configurable server chunks), затем лимиты структуры/points/сцены. Серверный incoming create limit 128 KiB — другое ограничение.
+- JSON v1 — один object в Text message, MessagePack v2 — один named map в Binary message. Один WS message может состоять из нескольких transport frames. Для JSON сохранить текущий receive cap 4 MiB, для v2 — 256 KiB до decode плюс structural budget и ≤8192 points/chunk. Client payload ≤128 KiB в обоих профилях. Codec не угадывается по bytes; компрессия отдельно и пока не включается.
 - Serial send queue объединяет hello/subscribe/mutations/ping, имеет byte/count bounds. При backpressure ставит на паузу outbox, а не копит память; канонические входящие события не теряются, при overflow disconnect + resnapshot.
 - Ping/pong проверить с URLSession на реальном backend, а не предполагать browser-like поведение. Предлагаемый idle ping ~20 s в foreground, timeout → reconnect; не создавать storm параллельно штатному heartbeat сервера.
 
 ### Connection state
 
 ```text
-stopped → connecting → awaitingHello → loadingSnapshot → live
-               └──────── ошибка/timeout ────────→ backingOff → connecting
+stopped → connecting → selectingProfile → awaitingHello → loadingSnapshot → live
+               └────────── ошибка/timeout ──────────→ backingOff → connecting
 любое active → background/stopped (outbox остаётся)
 ```
 
-`hello.ack.protocol_version` обязан быть 1. Optional spawn применять только если нет восстановленной камеры и пользователь ещё не перемещал холст; reconnect не телепортирует. До hello ack запрещены subscribe/create/delete.
+`hello.ack.protocol_version` должен совпасть с выбранным профилем: 1 для JSON, 2 для MessagePack. Пустой selected profile при предложенных subprotocols — ошибка, не auto-legacy retry. Optional spawn применять только если нет восстановленной камеры и пользователь ещё не перемещал холст; reconnect не телепортирует. До hello ack запрещены subscribe/create/delete.
 
 Начальные таймеры: connect/hello client watchdog 8 s, ack 12 s, snapshot целиком 35 s; серверные defaults — hello 5 s, operation 10 s, snapshot 30 s. Snapshot deadline не продлевается бесконечно каждым chunk. При config mismatch уточнять среду, не маскировать таймаутами.
 
@@ -299,6 +307,7 @@ Reconnect: exponential backoff с jitter, от ~0.5 до 10 s. `NWPathMonitor` �
 - Prefetch до 3× видимого span, но максимум 30000 по каждой оси и clamp world. Переподписка до выхода из загруженной области, с coalescing latest bounds и интервалом ≥260 ms (ниже 5/s).
 - При pan не отправлять subscribe на каждый кадр. Согласовать camera bounds, фактически отправленные bounds и last completed coverage отдельно.
 - Не пытаться восстановить события через `last_seq`: delete не создаёт нового seq.
+- Приняты следующие транспортные этапы: authoritative manifest + missing geometry, затем visible-first внутри snapshot. Они требуют отдельного согласованного контракта следующей версии; не добавлять token/fetch/visible_bounds в текущий v2. См. [нативный план транспорта](transport-evolution.md).
 
 ### SceneStore
 
@@ -310,7 +319,7 @@ Reconnect: exponential backoff с jitter, от ~0.5 до 10 s. `NWPathMonitor` �
 - `hidden`: собственные удаления/отменённые create, ожидающие разрешения;
 - bounded tombstones и overlays для ack, пришедших вне snapshot-порядка.
 
-Для первого implementation предпочесть простой вариант: старую confirmed сцену оставлять на экране до snapshot end, staging не публиковать частично. После end заменить её атомарно. Это снижает число промежуточных состояний по сравнению с web union-staging. Progressive display chunks можно добавить позже без изменения authority semantics.
+Пересмотрено для быстрой первой отрисовки: валидные server records из staging показывать по мере готовности geometry, поверх bounded stale/confirmed display с дедупликацией UUID и server seq order. Отсутствующие IDs удаляются только при snapshot.end, который атомарно заменяет authoritative membership. Известные tombstones/hidden не ждут end. При отмене уже показанное может остаться bounded stale cache, но не доказательством complete области. Empty/fully-cached end завершает loading/deadline даже без изменений render set. Это progressive display, не обещание server-side visible-first до следующего контракта.
 
 ACK не scoped текущей областью: свой stroke может подтверждаться уже за экраном. Подтверждение хранится в operation/undo history, а в scoped rendering попадает только если пересекает новую область. Не прибавлять все offscreen acks к авторитетному snapshot навсегда.
 
@@ -358,7 +367,7 @@ Timeout/disconnect до ack не означает отказ. Вернуть att
 - Keychain accessibility `WhenUnlockedThisDeviceOnly`, без synchronizable/iCloud. Не использовать UserDefaults, URL query, analytics или логи.
 - Ошибка protected data/Keychain не эквивалентна отсутствию identity: дождаться unlock, не генерировать нового владельца поверх старого outbox.
 - Journal ссылается на несекретный identity ID, не содержит session_secret. При mismatch/недоступности ключа очередь не отправляется с другим secret.
-- Dev/prod имеют раздельные namespace, journal и camera. Смена host не переносит pending автоматически.
+- Dev/prod имеют раздельные namespace, journal и camera. Смена host не переносит pending автоматически. Выбранный transport profile не меняет identity. Префикс `v1` в Keychain account и journal path — storage schema, а не JSON wire version: не заменять его на `v2` из-за MessagePack.
 - Backup: связанные identity-dependent журналы исключены из backup, защищены file protection, согласованной с unlocked key. Не обещать ownership после переустановки/переноса устройства; Keychain persistence после uninstall зависит от системы, это не recovery contract.
 - Reset identity не добавлять как безобидную кнопку: при будущем появлении требуется предупреждение о потере delete rights и разрешение pending операций.
 

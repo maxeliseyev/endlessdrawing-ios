@@ -1,20 +1,22 @@
-import Metal
+import MetalKit
 import Testing
 @testable import Endless_Drawing
 
 @Suite(.serialized)
 @MainActor
 struct MetalRendererTests {
-    private func render(_ paths: [[WorldPoint]], camera: Camera = Camera(), color: InkColor = .palette[0]) throws -> [UInt8] {
+    private func render(_ paths: [[WorldPoint]], camera: Camera = Camera(), color: InkColor = .palette[0],
+                        brush: BrushKind = .round, width: Double = 12) throws -> [UInt8] {
         let device = try #require(MTLCreateSystemDefaultDevice())
         let renderer = try MetalRenderer(device: device)
         renderer.camera = camera
         var style = BrushStyle()
-        style.width = 12
+        style.brush = brush
+        style.width = width
         style.opacity = 0.5
         style.color = color
         renderer.strokes = try paths.map { points in
-            let prepared = try #require(RoundGeometry.prepare(LocalStroke(id: UUID(), points: points, style: style)))
+            let prepared = try #require(BrushGeometry.prepare(LocalStroke(id: UUID(), points: points, style: style)))
             return try renderer.upload(prepared)
         }
         return try readFrame(renderer)
@@ -41,9 +43,31 @@ struct MetalRendererTests {
 
     private func channel(_ pixels: [UInt8], x: Int, y: Int) -> Int { Int(pixels[(y * 128 + x) * 4]) }
 
+    @Test func additionalBrushesRenderTheirActualShapesAndApplyOpacityOnce() throws {
+        let square = try render([[.zero]], brush: .square)
+        let round = try render([[.zero]])
+        #expect(channel(square, x: 69, y: 69) < channel(round, x: 69, y: 69))
+        let chisel = try render([[.zero]], brush: .chisel)
+        #expect(channel(chisel, x: 66, y: 61) < 255)
+        #expect(channel(chisel, x: 66, y: 66) == 255)
+        let spray = try render([[.zero, .zero]], brush: .spray, width: 64)
+        #expect(spray.contains { $0 < 255 })
+        #expect(stride(from: 0, to: spray.count, by: 4).allSatisfy { spray[$0] >= 143 })
+    }
+
     @Test func emptyCanvasIsWhite() throws {
         let pixels = try render([])
         #expect(pixels.allSatisfy { $0 == 255 })
+    }
+
+    @Test func strokeRemainsVisibleAtEightPercentZoom() throws {
+        var camera = Camera()
+        camera.zoom(to: 0.08, anchor: WorldPoint(x: 64, y: 64), viewport: CanvasSize(width: 128, height: 128))
+        #expect(camera.zoom == 0.08)
+        let pixels = try render([[WorldPoint(x: -400, y: 0), WorldPoint(x: 400, y: 0)]], camera: camera)
+        #expect(channel(pixels, x: 64, y: 64) < 255)
+        #expect(channel(pixels, x: 64, y: 20) == 255)
+        #expect(channel(pixels, x: 10, y: 64) == 255)
     }
 
     @Test func sameStrokeOverlapAppliesOpacityOnce() throws {
@@ -77,6 +101,91 @@ struct MetalRendererTests {
         #expect(abs(channel(preview, x: 64, y: 64) - 144) <= 1)
         renderer.preview = nil
         #expect(try readFrame(renderer).allSatisfy { $0 == 255 })
+    }
+
+    @Test func pencilLiftKeepsRealInkVisibleUntilFinalGeometryArrives() async throws {
+        let model = CanvasModel()
+        let controller = CanvasViewController(model: model)
+        controller.loadViewIfNeeded()
+        let surface = try #require(controller.view as? MTKView)
+        let renderer = try #require(surface.delegate as? MetalRenderer)
+        var style = BrushStyle()
+        style.width = 12
+        style.opacity = 0.5
+        let id = UUID()
+        let realPoints = [WorldPoint(x: -40, y: 0), .zero]
+        let previewStroke = LocalStroke(id: id, points: realPoints + [WorldPoint(x: 40, y: 0)], style: style)
+        let previewGeometry = try #require(RoundGeometry.prepare(previewStroke, realPointCount: realPoints.count))
+        let preview = try renderer.upload(previewGeometry)
+        renderer.preview = preview
+        let activeFrame = try readFrame(renderer)
+        #expect(abs(channel(activeFrame, x: 40, y: 64) - 144) <= 1)
+        #expect(abs(channel(activeFrame, x: 90, y: 64) - 144) <= 1)
+
+        let finished = LocalStroke(id: id, points: realPoints + [WorldPoint(x: 10, y: 0)], style: style)
+        controller.complete(finished)
+        let held = try #require(renderer.strokes.first)
+        #expect(renderer.preview == nil)
+        #expect(held.triangles === preview.triangles)
+        #expect(held.circles === preview.circles)
+        #expect(held.triangleCount == previewGeometry.realTriangleCount)
+        // Do not yield to the finalization task yet: render several frames while it is still pending.
+        for _ in 0..<3 {
+            let pendingFrame = try readFrame(renderer)
+            #expect(abs(channel(pendingFrame, x: 40, y: 64) - 144) <= 1)
+            #expect(channel(pendingFrame, x: 90, y: 64) == 255) // no predicted ink after lift
+        }
+        renderer.releaseTargets()
+        let rebuiltFrame = try readFrame(renderer)
+        #expect(abs(channel(rebuiltFrame, x: 40, y: 64) - 144) <= 1)
+
+        for _ in 0..<100 {
+            if renderer.strokes.first?.triangleCount == 12 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(renderer.strokes.first?.triangleCount == 12)
+        let finalFrame = try readFrame(renderer)
+        #expect(abs(channel(finalFrame, x: 40, y: 64) - 144) <= 1)
+        #expect(abs(channel(finalFrame, x: 74, y: 64) - 144) <= 1)
+        #expect(channel(finalFrame, x: 90, y: 64) == 255)
+    }
+
+    @Test func rapidStrokesAndUndoPreservePendingHandoffsWithoutResurrection() async throws {
+        let model = CanvasModel()
+        let controller = CanvasViewController(model: model)
+        controller.loadViewIfNeeded()
+        let surface = try #require(controller.view as? MTKView)
+        let renderer = try #require(surface.delegate as? MetalRenderer)
+        var style = BrushStyle()
+        style.width = 12
+        style.opacity = 0.5
+        var ids: [UUID] = []
+        for y in [-20.0, 20.0] {
+            let real = LocalStroke(id: UUID(), points: [WorldPoint(x: -40, y: y), WorldPoint(x: 0, y: y)], style: style)
+            let predicted = LocalStroke(id: real.id, points: real.points + [WorldPoint(x: 40, y: y)], style: style)
+            let prepared = try #require(RoundGeometry.prepare(predicted, realPointCount: real.points.count))
+            renderer.preview = try renderer.upload(prepared)
+            controller.complete(real)
+            ids.append(real.id)
+        }
+        #expect(renderer.strokes.map(\.id) == ids)
+        let bothPending = try readFrame(renderer)
+        #expect(abs(channel(bothPending, x: 40, y: 44) - 144) <= 1)
+        #expect(abs(channel(bothPending, x: 40, y: 84) - 144) <= 1)
+        let heldFirst = try #require(renderer.strokes.first)
+        model.command?(.undo)
+        #expect(renderer.strokes.map(\.id) == [ids[0]])
+        let afterUndo = try readFrame(renderer)
+        #expect(channel(afterUndo, x: 40, y: 84) == 255)
+        for _ in 0..<100 {
+            if renderer.strokes.first?.triangles !== heldFirst.triangles { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(renderer.strokes.first?.triangles !== heldFirst.triangles)
+        #expect(renderer.strokes.map(\.id) == [ids[0]])
+        let finalFrame = try readFrame(renderer)
+        #expect(abs(channel(finalFrame, x: 40, y: 44) - 144) <= 1)
+        #expect(channel(finalFrame, x: 40, y: 84) == 255)
     }
 
     @Test func cameraChangeInvalidatesCachedCanvas() throws {

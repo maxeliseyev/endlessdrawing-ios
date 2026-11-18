@@ -6,6 +6,10 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		ED0000000000000000000021 /* DMMessagePack in Frameworks */ = {isa = PBXBuildFile; productRef = ED0000000000000000000022 /* DMMessagePack */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		ED000000000000000000000B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -38,6 +42,7 @@
 		BF538EC430AD8E4D00DD7A05 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				ED0000000000000000000021 /* DMMessagePack in Frameworks */,
 			);
 		};
 		ED0000000000000000000005 /* Frameworks */ = {
@@ -83,6 +88,9 @@
 				BF538EC930AD8E4D00DD7A05 /* Endless Drawing */,
 			);
 			name = "Endless Drawing";
+			packageProductDependencies = (
+				ED0000000000000000000022 /* DMMessagePack */,
+			);
 			productName = "Endless drawing";
 			productReference = BF538EC730AD8E4D00DD7A05 /* Endless Drawing.app */;
 			productType = "com.apple.product-type.application";
@@ -133,6 +141,9 @@
 			);
 			mainGroup = BF538EBE30AD8E4D00DD7A05;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				ED0000000000000000000023 /* XCRemoteSwiftPackageReference "msgpack-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BF538EC830AD8E4D00DD7A05 /* Products */;
 			projectDirPath = "";
@@ -184,6 +195,7 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -238,9 +250,11 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 			};
 			name = Debug;
 		};
@@ -249,6 +263,7 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
@@ -296,8 +311,10 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
@@ -308,12 +325,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = PK2473XF3P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Configuration/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Endless Drawing";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -324,7 +342,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.endlessdrawing;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -347,12 +365,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = PK2473XF3P;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Configuration/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Endless Drawing";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -363,7 +382,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = maximeliseyev.endlessdrawing;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -444,6 +463,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		ED0000000000000000000023 /* XCRemoteSwiftPackageReference "msgpack-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/fumoboy007/msgpack-swift.git";
+			requirement = {
+				kind = exactVersion;
+				version = 2.0.6;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		ED0000000000000000000022 /* DMMessagePack */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ED0000000000000000000023 /* XCRemoteSwiftPackageReference "msgpack-swift" */;
+			productName = DMMessagePack;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BF538EBF30AD8E4D00DD7A05 /* Project object */;
 	validationLevel = 1;

@@ -17,10 +17,21 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let id: UUID
         let origin: WorldPoint
         let style: BrushStyle
+        let extent: StrokeExtent
         let triangles: MTLBuffer?
         let triangleCount: Int
         let circles: MTLBuffer?
         let circleCount: Int
+        let realTriangleCount: Int
+        let realCircleCount: Int
+
+        /// Reuse the current buffers during finalization, dropping predictions without an upload or wait.
+        var withoutPredictions: Self {
+            Self(id: id, origin: origin, style: style, extent: extent,
+                 triangles: triangles, triangleCount: realTriangleCount,
+                 circles: circles, circleCount: realCircleCount,
+                 realTriangleCount: realTriangleCount, realCircleCount: realCircleCount)
+        }
     }
 
     private struct Projection {
@@ -100,9 +111,10 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             guard let result else { throw Failure.allocation }
             return result
         }
-        return try GPUStroke(id: prepared.id, origin: prepared.origin, style: prepared.style,
+        return try GPUStroke(id: prepared.id, origin: prepared.origin, style: prepared.style, extent: prepared.extent,
                              triangles: buffer(prepared.triangles), triangleCount: prepared.triangles.count,
-                             circles: buffer(prepared.circles), circleCount: prepared.circles.count)
+                             circles: buffer(prepared.circles), circleCount: prepared.circles.count,
+                             realTriangleCount: prepared.realTriangleCount, realCircleCount: prepared.realCircleCount)
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { releaseTargets() }
@@ -223,6 +235,16 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private func draw(_ stroke: GPUStroke, to target: MTLTexture, viewport: CanvasSize,
                       command: MTLCommandBuffer) throws {
         guard let coverage else { throw Failure.allocation }
+        let low = camera.screenPoint(at: WorldPoint(x: stroke.extent.minX, y: stroke.extent.minY), viewport: viewport)
+        let high = camera.screenPoint(at: WorldPoint(x: stroke.extent.maxX, y: stroke.extent.maxY), viewport: viewport)
+        let sx = Double(target.width) / viewport.width, sy = Double(target.height) / viewport.height
+        guard sx.isFinite, sy.isFinite else { throw Failure.allocation }
+        let x0 = Int(max(0, min(Double(target.width), floor(low.x * sx - 2))))
+        let y0 = Int(max(0, min(Double(target.height), floor(low.y * sy - 2))))
+        let x1 = Int(max(0, min(Double(target.width), ceil(high.x * sx + 2))))
+        let y1 = Int(max(0, min(Double(target.height), ceil(high.y * sy + 2))))
+        guard x1 > x0, y1 > y0 else { return }
+        let clip = MTLScissorRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
         let pass = MTLRenderPassDescriptor()
         let attachment = pass.colorAttachments[0]!
         attachment.texture = multisampleCoverage ?? coverage
@@ -237,6 +259,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                                     zoom: SIMD2(repeating: Float(camera.zoom)),
                                     pixelWorld: SIMD2(Float(viewport.width / Double(target.width) / camera.zoom),
                                                       Float(viewport.height / Double(target.height) / camera.zoom)))
+        encoder.setScissorRect(clip)
         encoder.setVertexBytes(&projection, length: MemoryLayout<Projection>.stride, index: 1)
         if let triangles = stroke.triangles {
             encoder.setRenderPipelineState(meshPipeline)
@@ -257,6 +280,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         guard let ink = command.makeRenderCommandEncoder(descriptor: composite) else { throw Failure.command }
         let rgb = stroke.style.color.components
         var color = SIMD4(rgb.x, rgb.y, rgb.z, Float(stroke.style.opacity))
+        ink.setScissorRect(clip)
         ink.setRenderPipelineState(inkPipeline)
         ink.setFragmentTexture(coverage, index: 0)
         ink.setFragmentBytes(&color, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)

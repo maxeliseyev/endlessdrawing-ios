@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var model = CanvasModel()
+    @State private var model: CanvasModel
+
+    init(model: CanvasModel = CanvasModel()) { _model = State(initialValue: model) }
 
     var body: some View {
         ZStack {

@@ -1,15 +1,15 @@
 # Проверки и приёмка iPad-клиента
 
-Статус: общая программа проверок. Пункт ниже сам по себе не означает, что тест написан или пройден. Фактические результаты первого среза — [отчёт M1](progress/m1-local-canvas.md): 23 автоматических теста на Simulator; device acceptance и сеть ещё не проверены. Последующие результаты также фиксируются отдельными отчётами с revision, устройством, версией iPadOS, конфигурацией сервера и датой запуска.
+Статус: общая программа проверок. Пункт ниже сам по себе не означает, что тест написан или пройден. Фактические результаты: [M1](progress/m1-local-canvas.md), [M2.1](progress/m2-foundation.md), [M2.2](progress/m2-msgpack-transport.md) и [M2.3](progress/m2-shared-canvas.md). Текущий набор — 104 обычных теста + 3 opt-in network gates (107 discovered): scene/FSM, shared Canvas/Metal, Keychain/journal, codec/corpus. Native read-only production WSS и isolated real backend/Postgres mutations/JSON rollback проверены отдельно. Базовое локальное рисование ранее подтверждено владельцем; physical подключённой сборки, полная device/performance matrix ещё не приняты. Последующие результаты также фиксируются отдельными отчётами с revision, устройством, версией iPadOS, конфигурацией сервера и датой запуска.
 
-Связанные документы: [план](implementation-plan.md), [архитектура](architecture.md).
+Связанные документы: [план](implementation-plan.md), [архитектура](architecture.md), [эволюция транспорта T1/T2/T3](transport-evolution.md). Transport gates ниже не отмечаются выполненными целиком от одного теста: actual backend/Postgres, native production TLS read и SceneStore уже проверены в M2.3; physical iPad ↔ browser, fault injection на настоящем WAN и будущий manifest/visible-first остаются. Idempotent Swift retry на реальном backend сохранил прежний seq и не создал пятую запись после четырёх create.
 
 ## 1. Уровни проверки
 
 1. Чистые unit-тесты: камера, геометрия, state machine, reducer, scheduler, журнал. Без UI и настоящей сети.
-2. Contract fixtures: декодирование wire v1 и численное сравнение геометрии с веб-реализацией.
+2. Contract fixtures: JSON v1 / MessagePack v2 и численное сравнение геометрии с веб-реализацией. Общий бинарный корпус с pinned revision/hash должен проверяться JS/backend/Swift, не только одной библиотекой.
 3. Metal render tests: offscreen textures/readback и допустимые image differences; на CI только при доступном Metal device.
-4. Transport integration: настоящий backend + PostgreSQL, контролируемые потери соединения/ответов.
+4. Transport integration: URLSession + loopback, isolated настоящий backend/PostgreSQL и read-only published WSS проверены; controlled faults покрыты FSM tests. WAN/device fault matrix ещё отдельно.
 5. UI tests: палитра, локализация, accessibility, lifecycle; не имитируют полную физику Pencil Pro.
 6. Физический iPad: Pencil gestures, ладонь, hover, задержка, frame pacing, память/тепло и системные жесты.
 
@@ -43,6 +43,7 @@ Simulator build не подтверждает качество Metal/Pencil на
 | G08 | Collinear resampling, разные sampling frequencies с одинаковой траекторией |
 | G09 | World origins 0, ±1e6, ±1e9; local offsets и translation invariance |
 | G10 | Штрих рядом с world edge и границей viewport/tile, расширенный bbox не обрезается |
+| G11 | Spray width 1/6/10/64: radius `max(0.35,min(0.5,width/20))`, диаметр ≤1 world unit; zoom/DPR не меняют world geometry. Сохранённые strokes используют тот же новый алгоритм, без legacy 2.5; preview/ack/reload и hit-test совпадают с текущим web |
 
 Центры полупрозрачных областей сравнивать строго по ожидаемому source-over с небольшим допуском квантования; AA-пиксели — с явно заданной маской/порогом. Не ослаблять весь image diff ради нескольких краёв. Точность trig/Float-conversion отдельно от byte-identical integer RNG.
 
@@ -61,7 +62,7 @@ Simulator build не подтверждает качество Metal/Pencil на
 | B01 | Finite/ranges/styles/UUID/seq/own; unknown brush не превращается в round |
 | B02 | 2000 real points, decimation сохраняет endpoints, encoded envelope ≤128 KiB |
 | B03 | Детерминированный spray: wrapping math, последовательность RNG, bounds и hit-test |
-| S01 | begin→chunks→end атомарно заменяет область, empty snapshot очищает старое |
+| S01 | Chunks отображаются прогрессивно, но authoritative membership/removal заменяются только на end; empty snapshot очищает старое |
 | S02 | Late frames старого subscription/generation игнорируются |
 | S03 | Own event до ack и ack до event: на экране один ID, одна undo entry |
 | S04 | Delete/tombstone до позднего create ack/snapshot не воскрешает stroke |
@@ -119,11 +120,34 @@ Fake clocks, identity/storage ports и transport должны инъециров
 
 - Разрешённый Origin проходит; отсутствующий/неразрешённый даёт 403. Не исправлять тест отключением allowlist.
 - Невалидный session secret, hello timeout и неподдержанная protocol_version дают контролируемый отказ.
-- Неправильный JSON, oversized text, неожиданный binary frame и неизвестная структура не вызывают crash/unbounded allocation.
+- Неправильный JSON/MessagePack, oversized message, неверный Text/Binary тип выбранного профиля и неизвестная структура не вызывают crash/unbounded allocation.
 - TLS validation штатная; неправильный сертификат и cross-host redirect не обходятся trust-all кодом.
 - Wi-Fi→offline→Wi-Fi, переключение сети, slow receive/send, server restart/503 и длительный snapshot.
 - Debug LAN на физическом iPad не использует 127.0.0.1 Mac по ошибке; проверить Local Network permission/ATS отдельно от production.
 - Если staging закрыт IP/private gate, доступ согласован с оператором. URLSession не обходит этот gate и не заменяет серверные допуски.
+
+### План новых transport gates
+
+Это будущие проверки. T1 — бинарный профиль, T2 — manifest/missing, T3 — visible-first; не путать их с нативными этапами M1/M2/M3.
+
+| ID | Проверка |
+| --- | --- |
+| T01 | Offered/selected profiles, nil/unexpected protocol, hello version, отсутствие auto-legacy retry и второго socket |
+| T02 | Legacy JSON / explicit JSON / MessagePack mixed clients; Origin и реальный Upgrade на URLSession, не только проверка request headers |
+| T03 | Exact single-object consumption; truncated/huge length headers, depth/nodes/string/map caps, duplicate/non-string/опасные keys, forbidden types; rejection до state update |
+| T04 | Double near ±1e9, integer/float64 geometry forms, no float32 output, integer-only safe seq, UUID strings и optional omission по общим fixtures |
+| T05 | JSON cap остаётся прежним, v2 receive ≤256 KiB, chunk ≤1000 strokes/8192 points; actual encoded byte checks перед send |
+| T06 | Потерян JSON create ack → MessagePack retry того же UUID/payload: один commit/undo, прежние Keychain identity и storage schema/path |
+| T07 | Полностью cached область: 0 geometry bytes, но manifest/control учитываются; empty/full-overlap end всегда завершает deadline/loading |
+| T08 | Пропущенный delete/hide внутри overlap и late old-subscription event: manifest/end убирает устаревшее, tombstone не даёт resurrection |
+| T09 | Cancel/reconnect/resync/timeout во всех фазах manifest/fetch; invalid token/unknown geometry ID не меняют текущую сцену |
+| T10 | Missing после eviction/truncation, pins borrowed geometry до end/cancel; partial cache не выдаётся за complete |
+| T11 | Own ack/pending/undo вне manifest или viewport не теряются и не превращаются в произвольный fetch через snapshot token |
+| T12 | Client limits, server retention/slow-client/pool exhaustion, bounded event ring и fairness missing reads к mutation/heartbeat |
+| T13 | Visible geometry приходит и готовится раньше prefetch в одном snapshot; поздний старый seq композится корректно и инвалидирует нужные tiles |
+| T14 | First visible paint отдельно от first chunk/end; cold/warm/cache/pan/zoom/reconnect/empty и WAN manifest RTT на одинаковом corpus/world bounds |
+
+До фиксации следующего wire нельзя писать проверки против придуманных token/fetch/visible_bounds messages как будто это уже v2. До включения binary по умолчанию — межъязыковой паритет и server-first rollout; до включения manifest/priority — отдельные race/resource/latency gates.
 
 ## 6. Устройства и доступность
 
@@ -159,7 +183,7 @@ Fake clocks, identity/storage ports и transport должны инъециров
 - 1000, 5000, 20000 простых strokes в области, с отдельно записанным общим point count.
 - Смесь 4 форм, opacity 0.5 и много self-overlap.
 - Один максимальный spray, затем несколько плотных spray в кадре; учитывать particles, не только strokes.
-- Камера на ±1e9, zoom 0.16 / 1 / 4, быстрый pan/pinch и остановка.
+- Камера на ±1e9, zoom 0.08 / 0.16 / 1 / 4, быстрый pan/pinch и остановка.
 - Сцена сверх лимита памяти для проверки degraded policy, а не требования отрисовать бесконечность.
 
 ### Начальные цели, не обещания

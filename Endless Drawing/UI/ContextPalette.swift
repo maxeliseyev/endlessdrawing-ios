@@ -7,14 +7,26 @@ struct ContextPalette: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Text("Round brush").font(.headline)
+                    Text("Brush").font(.headline)
                     Spacer()
                     Button { model.paletteAnchor = nil } label: { Image(systemName: "xmark") }
                         .accessibilityLabel(Text("Close tools"))
                         .frame(minWidth: 44, minHeight: 44)
                 }
-                Text("Local prototype — drawings are not saved or shared.")
+                Text(model.statusText)
                     .font(.footnote).foregroundStyle(.secondary)
+                if let state = model.worldState, state.pendingCount > 0 {
+                    Text("Pending operations: \(state.pendingCount)").font(.footnote).foregroundStyle(.secondary)
+                }
+                if model.isShared {
+                    Button("Retry") { model.command?(.retry) }.frame(minHeight: 44)
+                }
+                Picker("Brush", selection: $model.style.brush) {
+                    Text("Round").tag(BrushKind.round)
+                    Text("Square").tag(BrushKind.square)
+                    Text("Chisel").tag(BrushKind.chisel)
+                    Text("Spray").tag(BrushKind.spray)
+                }.pickerStyle(.segmented)
                 HStack(spacing: 0) {
                     ForEach(Array(InkColor.palette.enumerated()), id: \.offset) { _, ink in
                         Button { model.style.color = ink } label: {
@@ -55,3 +67,5 @@ struct ContextPalette: View {
         .accessibilityAction(.escape) { model.paletteAnchor = nil }
     }
 }
+
+//#Preview { ContextPalette() }

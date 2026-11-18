@@ -2,7 +2,9 @@
 
 ## 1. Статус и границы документа
 
-Основа согласована владельцем в текущем обсуждении: отдельное нативное iPad-приложение, SwiftUI + UIKit + Metal, существующий WS-протокол и Keychain. Metal выбран для плавности и аппаратного ускорения на устройстве.
+Основа согласована владельцем в текущем обсуждении: отдельное нативное iPad-приложение, SwiftUI + UIKit + Metal, общий WS backend и Keychain. Metal выбран для плавности и аппаратного ускорения на устройстве.
+
+Дополнительно принята транспортная эволюция из frontend docs: MessagePack v2, authoritative manifest с geometry fetch только отсутствующего, затем приоритет visible geometry перед prefetch. Эти изменения внедряются совместно с backend и имеют отдельные этапы/версии, а не включаются только на iPad. Статус, native API и rollout gates: [transport-evolution.md](transport-evolution.md).
 
 Остальное ниже — проект реализации этой основы. Числа бюджетов, внутренние типы и поведение в спорных UX-ситуациях являются предлагаемыми решениями, а не результатами измерений или уже работающими возможностями.
 
@@ -14,7 +16,7 @@
 - в рабочем дереве уже есть переименования файлов/проекта владельца; не отменять и не смешивать с архитектурными изменениями;
 - код веб-клиента и backend изучается как контракт; изменения в соседних репозиториях в этот план работ не входят автоматически.
 
-**Текущий прогресс:** реализован первый локальный срез M1 в Debug и Release, не закрыта физическая приёмка. Есть камера, round geometry/coverage renderer, Pencil samples, finger navigation и минимальная палитра. К 23 автоматическим тестам добавлена регрессия запуска canvas в обеих конфигурациях; сеть ещё не подключена. Фактические результаты и ограничения: [отчёт M1](progress/m1-local-canvas.md).
+**Текущий прогресс:** [M2.3](progress/m2-shared-canvas.md) включает production Canvas, WorldSession/SceneStore, durable journal/send/ack/undo и четыре кисти; zoom 8–400%. 107 tests discovered (104 ordinary + 3 explicit network gates), actual native read-only published WSS и isolated backend/Postgres mutation/JSON rollback проверены. Подключённая сборка ещё требует physical iPad ↔ browser acceptance; GPU/performance, eraser и Pencil Pro gestures не закрыты.
 
 Реализацию вести вертикальными срезами, каждый заканчивается проверяемым поведением. Не начинать сразу с полного тайлового движка и всех инструментов.
 
@@ -25,10 +27,12 @@
 | D01 | Отдельный нативный клиент, не WebView | Собственные ввод и рендер; общий сервер и мир |
 | D02 | SwiftUI + UIKit | SwiftUI-палитра и композиция; UIKit canvas controller и touch state machine |
 | D03 | Metal / MetalKit | `MTKView`, собственная геометрия, coverage и GPU-кеши |
-| D04 | Текущий JSON WS v1 | Snapshot/live/create/delete/ack; без второго HTTP-механизма синхронизации |
+| D04 | Общий WS: MessagePack v2 с переходной поддержкой JSON v1 | Codec negotiation до hello; семантика мутаций и один socket сохраняются, backend выкладывается первым |
 | D05 | Секрет владельца в Keychain | Право удаления сохраняется после обычного перезапуска приложения |
 | D06 | UI соответствует продукту | Нет onboarding, брендинга поверх холста и постоянной панели |
 | D07 | Совместимость с веб-геометрией | Нельзя незаметно заменить chisel/spray на другую кисть |
+| D08 | Manifest + missing geometry для смены области | Сверять полный состав и удаления в overlap; точный wire — следующая согласованная версия после v2 |
+| D09 | Видимая область раньше prefetch | Приоритет в одном согласованном snapshot, progressive display и композиция всегда по seq |
 
 ### Что сознательно не входит в v1 приложения
 
@@ -68,7 +72,7 @@
 - [ ] Проверить нативный WS Upgrade с явным Origin на dev-стенде, зафиксировать адрес/allowlist.
 - [x] Подготовить versioned fixture-набор round из веб-геометрии, с commit и SHA256 источников; остальные формы — на M3.
 
-**Выход:** архитектура не требует изменения wire v1; места, где нужны серверные настройки или решение владельца, явно перечислены.
+**Выход:** подготовительный M2.1 совместим с текущим v1. Новые transport profiles и manifest/priority extensions вводятся только согласованными версиями; серверные настройки, fixtures и rollout dependencies явно перечислены.
 
 ### M1 — локальный вертикальный срез Metal + Pencil
 
@@ -80,30 +84,39 @@
 - [x] Код finger pan/pinch, long press и минимальной палитры; отмена при фоне, rotation и системном cancel. UIKit-сценарии требуют device acceptance.
 - [x] Код рендера по необходимости в покое и frame loop при активном взаимодействии; тесселяция на serial worker actor.
 - [x] Unit/fixture-тесты камеры, ввода и round; offscreen Metal tests, Debug device build без подписи и Release simulator build.
-- [ ] Физический Pencil/iPad: проверить UIKit-сценарии, взять GPU capture и замерить плавность/задержку; только после этого закрыть M1.
+- [x] Владелец подтвердил базовое рисование на iPad и устранение мигания после отпускания Pencil.
+- [ ] Полная физическая приёмка UIKit-сценариев, GPU capture и замеры плавности/задержки; не считать их выполненными по подтверждению базового рисования.
 
 **Выход:** на iPad можно плавно рисовать локально и перемещать холст. Нет утверждения, что эти линии общие или сохранены на сервере. Временный локальный режим доступен в Debug и Release для приёмки на устройстве, явно обозначен в палитре и не является продуктовым fallback вместо сети. Публичный выпуск до подключения общего мира не готов.
 
 ### M2 — первый общий штрих с сайтом
 
-- [ ] Typed DTO, runtime validation, безопасное декодирование недоверенного JSON.
-- [ ] `IdentityStore`: 32 криптографически случайных байта, Keychain и разделение dev/prod.
-- [ ] `WebSocketTransport` и `WorldSession`: Origin, hello/version, subscribe, snapshot и live.
-- [ ] Сохранение неизменяемого create/delete в bounded durable outbox до отправки.
-- [ ] Optimistic preview → pending → confirmed; дедупликация event/ack по UUID.
-- [ ] Переподписка с prefetch, игнорирование старых generation/subscription IDs, staged snapshot.
-- [ ] Reconnect с backoff/jitter, ack timeout, resync и неизменяемый retry payload.
-- [ ] Восстановление outbox после завершения процесса; foreground/background/lock handling.
-- [ ] Реальный smoke: iPad создаёт, сайт видит; сайт создаёт, iPad видит; reconnect не дублирует.
+- [x] Typed DTO, runtime validation, безопасное декодирование недоверенного JSON (слой M2.1).
+- [x] Pinned backend corpus обеих версий энкодера читается Swift; Swift output читается bounded frontend codec. Выбран msgpack-swift 2.0.6, bounded preflight и float64 output adapter проверены.
+- [x] Codec boundary с profile-aware hello/version, Text/Binary, byte и chunk-point caps; JSON v1 compatibility сохранена.
+- [x] Actual Swift client frames прочитаны настоящим backend: отдельный native WorldSession ↔ Postgres smoke, четыре кисти, mixed binary/legacy, ownership/idempotency/undo; не только codec self-round-trip.
+- [x] `IdentityStore`: 32 криптографически случайных байта, Keychain и разделение окружений (M2.1), подключён к Canvas в M2.3.
+- [x] Standalone `WebSocketTransport`: Origin, selection до hello, bounded serial send/receive, Ping/Pong, cancellation/generation guards и loopback tests.
+- [x] `WorldSession`: application hello/snapshot/ack FSM, progressive authoritative scene, reconnect/backoff, deadlines и one-in-flight mutation scheduler.
+- [x] Published native read-only v2 Upgrade/hello/snapshot подтверждён; отсутствие selected profile не обходит handshake. Server JSON rollback проверен на isolated backend.
+- [x] Слой bounded durable outbox: immutable create/delete, persist-before-send marker, компенсация отменённого unknown create, restart/identity guards.
+- [x] Identity/outbox подключены к finalize/send. До local write draft только в RAM, до ack — pending; ошибки записи не отправляют и не уничтожают RAM draft.
+- [x] Preview → pending → confirmed; event/ack дедупликация и GPU handoff, включая shared-path regression tests.
+- [x] Prefetch/переподписка, generation/scope guards, progressive staging; authoritative absence только на end.
+- [x] Reconnect/backoff, ack retry с прежним payload, bounded retry и pause dense/snapshot-timeout areas.
+- [x] Bootstrap загружает прежний outbox; lifecycle останавливает/возобновляет тот же world, camera сохраняется. Restart state machine и fail-closed storage проверены unit tests.
+- [ ] Physical hard-kill/relaunch/lock и iPad ↔ browser smoke на опубликованном мире: не подменяется Simulator/Postgres проверками.
 
-**Выход:** первый round-штрих работает в общем мире, включая потерю ack и перезапуск. До открытия произвольной существующей области renderer обязан понимать все серверные формы: оставшиеся формы подключить здесь либо завершить M3 до внешней раздачи; неизвестную форму не рисовать как round.
+**Выход:** первый round-штрих работает в общем мире, включая потерю ack и перезапуск; JSON/MessagePack coexistence подтверждена после dual-profile backend rollout. До открытия произвольной существующей области renderer обязан понимать все серверные формы: оставшиеся формы подключить здесь либо завершить M3 до внешней раздачи; неизвестную форму не рисовать как round.
+
+Транспортные manifest/missing и visible-first — отдельные T2/T3 gates из [transport-evolution.md](transport-evolution.md), не считаются выполненными от одного MessagePack или progressive display. Их точные сообщения/новый profile сначала фиксируются совместно, затем реализуются и проверяются на delete/hide/cancellation/eviction гонках.
 
 ### M3 — полноценные инструменты и Pencil Pro
 
-- [ ] Square, chisel и spray по существующему визуальному контракту, общие fixtures с сайтом.
+- [x] Square, chisel и spray по существующему визуальному контракту, общие numerical fixtures с сайтом и Metal tests; физическая визуальная приёмка впереди. Spray: максимальный диаметр 1 world unit вместо 2.5, radius `max(0.35,min(0.5,width/20))`; все старые штрихи перерисовываются новым алгоритмом, без legacy-ветки и смены wire.
 - [ ] Analytical hit-test каждой формы, допуск 4 экранных pt; пространственный отбор кандидатов.
 - [ ] Удаление только `own`, optimistic hide/rollback; чужие штрихи не выбираются ластиком.
-- [ ] Undo pending и confirmed, корректная компенсация create → delete при неизвестном результате.
+- [x] Undo pending/confirmed через journal и server delete, компенсация unknown create; controlled faults и real-backend проверены.
 - [ ] `UIPencilInteraction`: preferred tap/squeeze actions, phase и fallback без hover pose.
 - [ ] Hover preview, отмена predicted tail перед палитрой, корректное переключение инструментов.
 - [ ] Полная контекстная палитра, EN/RU, VoiceOver, Dynamic Type, hardware keyboard.
@@ -137,13 +150,15 @@
 
 ## 5. Порядок ближайшей реализации
 
-После этого документа начинать с M0 build/fixtures и M1, небольшими изменениями:
+После M2.3 продолжать небольшими проверяемыми срезами:
 
-1. Baseline build и тестовый target; camera/model/brush geometry как чистый код.
-2. Metal canvas: круглая точка → сегмент → self-overlap/opacity → локальный preview.
-3. UIKit state machine: Pencil + pan/pinch + cancellation.
-4. Минимальная палитра и первый замер на iPad.
-5. Keychain/outbox/transport и общий round со страницей сайта.
+1. Physical iPad ↔ browser acceptance: четыре кисти, undo, restart/ownership, background/Wi-Fi loss; не дублировать уже пройденный isolated Postgres gate.
+2. Измерить performance/память/thermal на shared мире и проверить явные dense budgets; direct renderer не объявлять тайловым.
+3. Native v3/manifest — по действующему backend контракту и fixtures, не добавлять поля в v2 и не включать offer до готовности FSM.
+4. Eraser hit-test и Pencil Pro gestures как отдельные срезы, сохраняя geometry/wire parity.
+5. Дополнить physical/WAN fault matrix: неизвестный ack при реальном JSON↔binary rollback, hard kill и lock/unlock.
+6. Принять для native действующий manifest v3 и реализовать T2 с overlap deletes, cache/pinning и отменой fetch.
+7. Отдельно принять visible-first extension, реализовать T3 внутри одного snapshot и сравнить cold/warm/WAN first visible paint.
 
 Не ждать готовности оптимизированных тайлов для проверки сети, и не выпускать сетевой клиент, неправильно рисующий уже существующие формы.
 
@@ -156,7 +171,9 @@
 | Палитра во время штриха | Отменить незавершённый штрих, не посылать обрезок | Device acceptance M3 |
 | Долговечность ownership | Локальный Keychain, без облака/экспорта; не обещать восстановление после удаления приложения | M2/privacy review |
 | Offline outbox | Ограниченная восстанавливаемая очередь, не offline-копия мира | M2 |
-| Origin и доступ к staging | Явный разрешённый Origin в URLRequest; не отключать server allowlist | M0/M2 |
+| Origin и доступ к staging | Явный разрешённый Origin, native protocol negotiation и real Upgrade; не отключать allowlist | M0/M2 |
+| MessagePack dependency | Проверить Codable mapping, caps, key validation, precision и межъязыковой corpus до подключения library | T1 |
+| Manifest/visible-first wire | Отдельный следующий профиль/контракт; retention/fairness/limit outcomes и cold-cache RTT ещё требуют фиксации | T2/T3 |
 | Цвет/AA | Сверка с web fixture; не включать linear-light compositing без сравнения | M1/M3 |
 | 120 Hz и расход батареи | Активный high refresh, сон в покое, адаптация к thermal state | M4 |
 | Плотная сцена выше лимитов | Явный degraded state и краткое уведомление, без вечного resync | M4 |
@@ -166,7 +183,7 @@
 
 - Код собирается для iPad simulator и, когда затронуты Metal/Pencil, проверен на устройстве.
 - Чистая логика покрыта тестами; wire/geometry fixtures не подменены догадками.
-- Нет сетевого I/O, JSON decoding, дисковой записи или полной тесселяции мира на UI hot path.
+- Нет сетевого I/O, JSON/MessagePack decoding, дисковой записи или полной тесселяции мира на UI hot path.
 - У всех очередей/кешей есть предел, политика переполнения и тест.
 - Отмена задач/смена поколения не позволяет старым результатам менять новую сцену.
 - Неподтверждённое не считается серверно сохранённым; секреты и hello не логируются.
