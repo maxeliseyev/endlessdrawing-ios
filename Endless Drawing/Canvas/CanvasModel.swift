@@ -16,6 +16,27 @@ final class CanvasModel {
     private(set) var recentColors: RecentColors
     @ObservationIgnored private let defaults: UserDefaults?
     private static let recentColorsKey = "recentColors"
+    private static let hiddenStrokesKey = "hiddenStrokes", hiddenAuthorsKey = "hiddenAuthors"
+    private static let termsKey = "acceptedTerms"
+    /// Bump when /terms changes materially: everyone is asked again before drawing.
+    static let termsVersion = "terms.v1"
+    static let termsURL = URL(string: "https://endlessdrawing.com/terms")!
+    static let supportURL = URL(string: "mailto:support@endlessdrawing.com")!
+
+    // MARK: App Review 1.2: terms, reports, local hiding
+    /// Reported strokes and blocked authors, hidden on this device only.
+    private(set) var hiddenContent: HiddenContent
+    @ObservationIgnored var onHiddenChanged: (() -> Void)?
+    /// The live app asks once per terms version before the first stroke.
+    private(set) var termsAccepted: Bool
+    var termsPrompt = false
+    /// Report mode: taps select strokes instead of drawing.
+    var reporting = false { didSet { if !reporting { reportSelection = []; reportSheet = false } } }
+    var reportSelection: [ReportTarget] = [] { didSet { onReportChanged?() } }
+    @ObservationIgnored var onReportChanged: (() -> Void)?
+    var reportSheet = false
+    /// Short, self-dismissing confirmation (e.g. after a report).
+    var notice: String?
     var failure: String?
     var canUndo = false
     var graphicsLimited = false
@@ -43,6 +64,49 @@ final class CanvasModel {
         self.environment = environment; world = session; storageReady = session != nil
         self.defaults = defaults
         recentColors = RecentColors(hexes: defaults?.stringArray(forKey: Self.recentColorsKey) ?? [])
+        hiddenContent = HiddenContent(storedStrokes: defaults?.stringArray(forKey: Self.hiddenStrokesKey) ?? [],
+                                      storedAuthors: defaults?.stringArray(forKey: Self.hiddenAuthorsKey) ?? [])
+        // Only the live app (with persistent defaults) asks; tests and previews never block drawing.
+        termsAccepted = defaults == nil || defaults?.string(forKey: Self.termsKey) == Self.termsVersion
+    }
+
+    func acceptTerms() {
+        termsAccepted = true; termsPrompt = false
+        defaults?.set(Self.termsVersion, forKey: Self.termsKey)
+    }
+
+    func startReporting() {
+        paletteAnchor = nil; reportSelection = []; reporting = true
+    }
+
+    /// Adds or removes a stroke from the report selection (at most 20, like the protocol).
+    func toggleReport(_ target: ReportTarget) {
+        if let index = reportSelection.firstIndex(where: { $0.id == target.id }) { reportSelection.remove(at: index) }
+        else if reportSelection.count < ClientMessage.maximumReportStrokes { reportSelection.append(target) }
+    }
+
+    /// Hides the selection (and its authors when blocking) right away, then informs moderation.
+    func submitReport(reason: ReportReason, blockAuthor: Bool) {
+        let targets = reportSelection
+        guard !targets.isEmpty else { return }
+        reporting = false
+        hide(strokes: targets.map(\.id), authors: blockAuthor ? targets.compactMap(\.author) : [])
+        notice = String(localized: "Thanks. Hidden for you — we review reports within 24 hours.")
+        let world = world
+        Task { await world?.report(strokeIDs: targets.map(\.id), reason: reason, blockAuthor: blockAuthor) }
+    }
+
+    func showHiddenContent() { hiddenContent = HiddenContent(); persistHidden() }
+
+    private func hide(strokes: [UUID], authors: [String]) {
+        hiddenContent.hide(strokes: strokes, authors: authors)
+        persistHidden()
+    }
+
+    private func persistHidden() {
+        defaults?.set(hiddenContent.storedStrokes, forKey: Self.hiddenStrokesKey)
+        defaults?.set(hiddenContent.authors, forKey: Self.hiddenAuthorsKey)
+        onHiddenChanged?()
     }
 
     /// Called when a stroke starts: remembers the custom color it was drawn with.
@@ -64,7 +128,7 @@ final class CanvasModel {
     }
     var canDraw: Bool {
         !isShared || (storageReady && !graphicsLimited && worldState?.status != .blocked && worldState?.status != .dense
-                      && worldState?.issue != .storage && (worldState?.pendingCount ?? 0) < 64)
+                      && worldState?.issue != .storage && worldState?.issue != .banned && (worldState?.pendingCount ?? 0) < 64)
     }
     var statusText: String {
         guard isShared else { return String(localized: "Local prototype — drawings are not saved or shared.") }
@@ -73,6 +137,9 @@ final class CanvasModel {
                 : String(localized: "Opening local drawing storage…")
         }
         if graphicsLimited { return String(localized: "This area is too dense. Zoom in to continue.") }
+        if worldState?.issue == .banned {
+            return String(localized: "Drawing is no longer available for this device because of a moderation decision.")
+        }
         if worldState?.issue == .storage {
             return String(localized: "Local storage failed — unsaved drafts are only in memory. Retry before closing the app.")
         }

@@ -43,6 +43,12 @@ final class CanvasViewController: UIViewController {
     private var sceneGeometryTask: Task<Void, Never>?
     private var sharedState: WorldRenderState?
     private var strokeExtents: [UUID: StrokeExtent] = [:]
+    /// Confirmed shared records by id (for report hit testing: own flag and author tag).
+    private var recordsByID: [UUID: SceneStroke] = [:]
+    /// Report mode: where each touch started, to tell a tap (select) from a pan.
+    private var reportTaps: [ObjectIdentifier: WorldPoint] = [:]
+    /// Dashed outlines of the strokes selected for a report.
+    private let reportLayer = CAShapeLayer()
     private var renderBudgetBlocked = false
     private var viewportTask: Task<Void, Never>?
     private var viewportToSend: (Camera, CanvasSize)?
@@ -95,6 +101,13 @@ final class CanvasViewController: UIViewController {
         model.command = { [weak self] command in self?.perform(command) }
         model.onWorld = { [weak self] state in self?.applyShared(state) }
         model.onCamera = { [weak self] next in self?.camera = next; self?.requestFrame() }
+        model.onHiddenChanged = { [weak self] in self?.rebuildSharedScene() }
+        model.onReportChanged = { [weak self] in self?.updateReportOverlay() }
+        reportLayer.fillColor = nil
+        reportLayer.strokeColor = UIColor.systemBlue.cgColor
+        reportLayer.lineWidth = 2
+        reportLayer.lineDashPattern = [6, 4]
+        surface.layer.addSublayer(reportLayer)
         let secondaryClick = UITapGestureRecognizer(target: self, action: #selector(secondaryClick(_:)))
         secondaryClick.buttonMaskRequired = .secondary
         // Mouse/trackpad only: otherwise a quick Pencil tap was recognized here, opened the palette and
@@ -200,8 +213,14 @@ final class CanvasViewController: UIViewController {
     func began(_ touches: Set<UITouch>, event: UIEvent?) {
         guard model.paletteAnchor == nil, model.failure == nil,
               renderer?.isRenderingEnabled == true, viewport.isValid else { return }
+        if model.reporting {
+            // Taps (finger or Pencil) pick strokes; fingers still pan and zoom. Nothing is drawn.
+            for touch in touches where touch.type == .pencil || touch.type == .direct { reportTaps[ObjectIdentifier(touch)] = screen(touch) }
+        }
         // Handle Pencil first even when UIKit batches direct and Pencil touches together.
-        for touch in touches where touch.type == .pencil {
+        for touch in touches where touch.type == .pencil && !model.reporting {
+            // App Review 1.2: the terms are accepted before anything is published.
+            guard model.termsAccepted else { model.termsPrompt = true; continue }
             guard pencilID == nil, model.canDraw,
                   !model.isShared || (sharedState?.pendingCount ?? 0) + volatileStrokes.count < 64 else { continue }
             model.userInteracted(camera: camera)
@@ -219,7 +238,7 @@ final class CanvasViewController: UIViewController {
             fingerIDs[ObjectIdentifier(touch)] = nextFingerID
             navigation.begin(id: nextFingerID, point: screen(touch), camera: camera)
             if pencilID != nil { navigation.blockUntilTouchesEnd() }
-            if navigation.touches.count == 1 && pencilID == nil && !navigation.blocked { armLongPress(at: screen(touch)) }
+            if navigation.touches.count == 1 && pencilID == nil && !navigation.blocked && !model.reporting { armLongPress(at: screen(touch)) }
             else { longPress?.cancel() }
         }
         updateFrameLoop()
@@ -266,6 +285,11 @@ final class CanvasViewController: UIViewController {
                 renderer?.preview = nil
             }
             if let id = fingerIDs.removeValue(forKey: ObjectIdentifier(touch)) { navigation.end(id: id) }
+            if let start = reportTaps.removeValue(forKey: ObjectIdentifier(touch)), !cancelled, model.reporting,
+               start.distance(to: screen(touch)) <= 10, let target = reportTarget(at: screen(touch)) {
+                model.toggleReport(target)
+                requestFrame()
+            }
         }
         longPress?.cancel()
         updateFrameLoop()
@@ -280,6 +304,7 @@ final class CanvasViewController: UIViewController {
         renderer?.preview = nil
         navigation.reset()
         fingerIDs.removeAll()
+        reportTaps.removeAll()
         updateFrameLoop()
         requestFrame()
     }
@@ -410,11 +435,15 @@ final class CanvasViewController: UIViewController {
         var ids: Set<UUID> = []
         let hidden = sharedState?.hidden ?? []
         var sequences: [UUID: Int64] = [:]
-        for record in sharedState?.confirmed ?? [] {
+        // Reported strokes and blocked authors are hidden on this device (App Review 1.2).
+        let blocked = model.hiddenContent
+        let confirmed = (sharedState?.confirmed ?? []).filter { !blocked.hides($0.server.payload.id, author: $0.server.author) }
+        recordsByID = Dictionary(confirmed.map { ($0.server.payload.id, $0) }, uniquingKeysWith: { $1 })
+        for record in confirmed {
             sequences[record.drawable.id] = record.server.sequence
             if strokeExtents[record.drawable.id] == nil { strokeExtents[record.drawable.id] = record.extent }
         }
-        let strokes = (sharedState?.confirmed.map(\.drawable) ?? []) + (sharedState?.pending ?? []) + volatileStrokes
+        let strokes = confirmed.map(\.drawable) + (sharedState?.pending ?? []) + volatileStrokes
         localStrokes = strokes.filter { stroke in
             guard !hidden.contains(stroke.id), ids.insert(stroke.id).inserted else { return false }
             if strokeExtents[stroke.id] == nil { strokeExtents[stroke.id] = StrokeExtent(stroke) }
@@ -643,6 +672,29 @@ final class CanvasViewController: UIViewController {
         } catch { model.failure = error.localizedDescription }
     }
 
+    /// The topmost stroke of someone else under a tap, for report mode.
+    private func reportTarget(at point: WorldPoint) -> ReportTarget? {
+        let world = camera.worldPoint(at: point, viewport: viewport)
+        let hit = StrokeHitTest.topmost(at: world, slop: 12 / camera.zoom, in: recordsByID.values) { $0.server.own }
+        return hit.map { ReportTarget(id: $0.server.payload.id, author: $0.server.author, extent: $0.extent) }
+    }
+
+    /// Outlines the strokes selected for a report, in screen space; follows pan and zoom.
+    private func updateReportOverlay() {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        reportLayer.frame = surface.bounds
+        guard model.reporting, !model.reportSelection.isEmpty else { reportLayer.path = nil; return }
+        let path = CGMutablePath()
+        for target in model.reportSelection {
+            let e = target.extent
+            let a = camera.screenPoint(at: WorldPoint(x: e.minX, y: e.minY), viewport: viewport)
+            let b = camera.screenPoint(at: WorldPoint(x: e.maxX, y: e.maxY), viewport: viewport)
+            path.addRect(CGRect(x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y).insetBy(dx: -4, dy: -4))
+        }
+        reportLayer.path = path
+    }
+
     @objc private func accessibleTools() -> Bool { showTools(); return true }
     @objc private func keyboardTools() { showTools() }
     @objc private func keyboardUndo() { perform(.undo) }
@@ -693,6 +745,7 @@ extension CanvasViewController: @preconcurrency CAMetalDisplayLinkDelegate {
         guard let renderer, let surface, renderer.isRenderingEnabled else { link.isPaused = true; return }
         frameRequested = false
         renderer.camera = camera
+        if !model.reportSelection.isEmpty || reportLayer.path != nil { updateReportOverlay() }
         let rendered = renderer.draw(update, viewport: CanvasSize(width: surface.bounds.width, height: surface.bounds.height))
         if !rendered { frameRequested = true }
         scheduleAfterFrame(rendered: rendered)

@@ -10,7 +10,8 @@ protocol CanvasTransport: Actor {
 extension WebSocketTransport: CanvasTransport {}
 
 nonisolated enum WorldStatus: Sendable, Equatable { case connecting, loading, live, offline, stopped, blocked, dense }
-nonisolated enum WorldIssue: Sendable, Equatable { case storage, protocolMismatch, rejected, dense }
+/// `banned`: a moderator banned this drawing identity; creates and reports are refused.
+nonisolated enum WorldIssue: Sendable, Equatable { case storage, protocolMismatch, rejected, dense, banned }
 nonisolated struct WorldRenderState: Sendable {
     let revision: UInt64
     let status: WorldStatus
@@ -77,6 +78,11 @@ actor WorldSession {
     private var publishFlush: Task<Void, Never>?
     private var snapshotChunks = 0
     private let onSpawn: @Sendable (WorldPoint) async -> Void
+    /// v5 reports waiting to be sent, oldest first. In memory only: the local hide is what persists.
+    private struct Report { let requestID: String; let strokeIDs: [UUID]; let reason: ReportReason; let blockAuthor: Bool }
+    private var reports: [Report] = []
+    private var reportInFlight: (requestID: String, deadline: TimeInterval)?
+    static let maximumQueuedReports = 20
 
     init(transport: any CanvasTransport, identity: DrawingIdentity, journal: OperationJournal,
          initial: JournalSnapshot, timing: WorldTiming = WorldTiming(), onSpawn: @escaping @Sendable (WorldPoint) async -> Void = { _ in }) {
@@ -119,6 +125,18 @@ actor WorldSession {
     func retry() async {
         await stop(); issue = nil; start()
     }
+
+    /// Queues a report for the server (sent on a v5 connection, one at a time). The caller hides the
+    /// strokes locally right away; this only informs moderation. False when the queue is full.
+    @discardableResult
+    func report(strokeIDs: [UUID], reason: ReportReason, blockAuthor: Bool) -> Bool {
+        let ids = Array(NSOrderedSet(array: strokeIDs).compactMap { $0 as? UUID }.prefix(ClientMessage.maximumReportStrokes))
+        guard !ids.isEmpty, reports.count < Self.maximumQueuedReports else { return false }
+        reports.append(Report(requestID: UUID().uuidString.lowercased(), strokeIDs: ids, reason: reason, blockAuthor: blockAuthor))
+        return true
+    }
+
+    var queuedReports: Int { reports.count }
 
     /// Pan/zoom only steer subscriptions; the published scene does not depend on the viewport.
     func update(region: CanvasRegion) {
@@ -202,7 +220,7 @@ actor WorldSession {
             do {
                 let connection = try await transport.connect()
                 guard running, token == epoch else { return }
-                connectionID = connection.id; pacer = RequestPacer(); attempt = nil
+                connectionID = connection.id; pacer = RequestPacer(); attempt = nil; reportInFlight = nil
                 profile = connection.profile; reusable = false; manifest = ManifestLoader(); pendingFetch = nil; resubscribeAt = nil
                 let now = ProcessInfo.processInfo.systemUptime
                 helloDeadline = now + timing.hello; lastPing = now
@@ -282,6 +300,14 @@ actor WorldSession {
             if now - lastPing >= timing.ping, pacer.admit(.ping, now: now) {
                 lastPing = now
                 try await transport.ping()
+                return
+            }
+            if let inFlight = reportInFlight, now >= inFlight.deadline { reportInFlight = nil } // resent below
+            if status == .live, profile.supportsReports, reportInFlight == nil, now >= retryAfter,
+               let report = reports.first, pacer.admit(.report, now: now) {
+                reportInFlight = (report.requestID, now + timing.acknowledgement)
+                try await transport.send(.report(requestID: report.requestID, strokeIDs: report.strokeIDs,
+                                                 reason: report.reason, blockAuthor: report.blockAuthor))
                 return
             }
             guard status == .live, attempt == nil, now >= retryAfter,
@@ -411,16 +437,29 @@ actor WorldSession {
             if attempt?.requestID == requestID { attempt = nil }
             issue = nil
             await refreshJournal()
+        case .reportAcknowledged(let requestID, _):
+            guard reportInFlight?.requestID == requestID else { return }
+            reportInFlight = nil
+            reports.removeAll { $0.requestID == requestID }
+        case .error(let requestID, _, let code) where requestID != nil && requestID == reportInFlight?.requestID:
+            reportInFlight = nil
+            if ["rate_limited", "internal_error"].contains(code) {
+                retryAfter = ProcessInfo.processInfo.systemUptime + 1.5
+            } else {
+                // Gone, own, invalid or banned: nothing to retry; the local hide already happened.
+                reports.removeAll { $0.requestID == requestID }
+                if code == "banned" { issue = .banned }
+            }
         case .error(let requestID, let subscriptionID, let code):
             if let subscriptionID, subscriptionID != scene.subscriptionID { return }
             if let requestID {
                 guard let active = attempt, active.requestID == requestID else { return }
                 if ["rate_limited", "internal_error"].contains(code) {
                     retryAfter = ProcessInfo.processInfo.systemUptime + 1.5
-                } else if ["id_conflict", "validation_failed", "invalid_message", "message_too_large", "forbidden", "stroke_deleted", "not_found"].contains(code) {
+                } else if ["id_conflict", "validation_failed", "invalid_message", "message_too_large", "forbidden", "stroke_deleted", "not_found", "banned"].contains(code) {
                     if code == "stroke_deleted" || code == "not_found" { try scene.remove(active.operation.payload.strokeID) }
                     try await journal.reject(operationID: active.operation.id, discardUndo: code == "not_found" || code == "stroke_deleted")
-                    issue = .rejected
+                    issue = code == "banned" ? .banned : .rejected
                 } else { throw TransportFailure.malformedMessage }
                 guard token == epoch else { return }
                 attempt = nil; await refreshJournal()

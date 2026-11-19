@@ -36,6 +36,20 @@ struct ContentView: View {
                 }
             }
         }
+        .overlay(alignment: .top) {
+            if model.reporting { ReportBar(model: model).padding(.top, 12) }
+        }
+        .overlay(alignment: .bottom) {
+            if let notice = model.notice {
+                NoticeToast(text: notice).padding(.bottom, 24)
+                    .task(id: notice) {
+                        try? await Task.sleep(for: .seconds(3))
+                        if model.notice == notice { model.notice = nil }
+                    }
+            }
+        }
+        .sheet(isPresented: $model.termsPrompt) { TermsSheet(model: model) }
+        .sheet(isPresented: $model.reportSheet) { ReportSheet(model: model) }
         .preferredColorScheme(.light)
         .alert("Canvas unavailable", isPresented: Binding(get: { model.failure != nil }, set: { if !$0 { model.failure = nil } })) {
             Button("Retry") { model.failure = nil; model.command?(.retry) }

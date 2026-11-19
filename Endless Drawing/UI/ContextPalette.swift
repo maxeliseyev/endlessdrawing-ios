@@ -26,6 +26,18 @@ struct ContextPalette: View {
             HStack {
                 Text("Brush").font(.headline)
                 Spacer()
+                Menu {
+                    if model.isShared {
+                        Button("Report drawing…", systemImage: "flag") { model.startReporting() }
+                    }
+                    if !model.hiddenContent.isEmpty {
+                        Button("Show hidden drawings", systemImage: "eye") { model.showHiddenContent() }
+                    }
+                    Link(destination: CanvasModel.termsURL) { Label("Terms of Use", systemImage: "doc.text") }
+                    Link(destination: CanvasModel.supportURL) { Label("Contact support", systemImage: "envelope") }
+                } label: { Image(systemName: "ellipsis.circle") }
+                    .accessibilityLabel(Text("More"))
+                    .frame(minWidth: 44, minHeight: 44)
                 Button { model.paletteAnchor = nil } label: { Image(systemName: "xmark") }
                     .accessibilityLabel(Text("Close tools"))
                     .frame(minWidth: 44, minHeight: 44)

@@ -21,6 +21,14 @@ actor WorldPeer: CanvasTransport {
     private var connectionCount = 0
     private var allowed = true
     private var manifestToken: UUID?
+    struct ReportAttempt: Sendable { let requestID: String; let strokeIDs: [UUID]; let reason: ReportReason; let blockAuthor: Bool }
+    private var reportLog: [ReportAttempt] = []
+    /// nil: acknowledge reports; otherwise answer them with this error code.
+    private var reportError: String?
+    private var bannedCreates = false
+    func reports() -> [ReportAttempt] { reportLog }
+    func failReports(_ code: String?) { reportError = code }
+    func banCreates() { bannedCreates = true }
 
     init(mode: Mode = .normal, profile: TransportProfile = .messagePackV2) { self.mode = mode; self.profile = profile }
     func subscriptions() -> [Subscription] { subscriptionLog }
@@ -90,8 +98,14 @@ actor WorldPeer: CanvasTransport {
                 output?.yield(.snapshotChunk(id: id, strokes: records.values.sorted { $0.sequence < $1.sequence }))
             }
             output?.yield(.snapshotEnd(id: id))
+        case .report(let requestID, let strokeIDs, let reason, let blockAuthor):
+            precondition(profile.supportsReports)
+            reportLog.append(ReportAttempt(requestID: requestID, strokeIDs: strokeIDs, reason: reason, blockAuthor: blockAuthor))
+            if let reportError { output?.yield(.error(requestID: requestID, subscriptionID: nil, code: reportError)) }
+            else { output?.yield(.reportAcknowledged(requestID: requestID, reportID: UUID())) }
         case .create(let requestID, let payload):
             attempts.append(CreateAttempt(requestID: requestID, payload: payload))
+            if bannedCreates { output?.yield(.error(requestID: requestID, subscriptionID: nil, code: "banned")); return }
             if mode == .rateLimitOnce && attempts.count == 1 {
                 output?.yield(.error(requestID: requestID, subscriptionID: nil, code: "rate_limited")); return
             }
@@ -325,5 +339,50 @@ struct WorldSessionTests {
         #expect(await h.peer.fetched().isEmpty) // own acked stroke is reused from the connection cache
         let state = await h.world.snapshot()
         #expect(state.confirmed.map(\.server.payload.id) == [mine.id] && state.pending.isEmpty && state.canUndo)
+    }
+
+    // MARK: - v5 reports (App Review 1.2)
+
+    @Test func v5ReportIsSentOnceLiveAndAcknowledged() async throws {
+        let h = try await make(profile: .messagePackV5)
+        defer { Task { await cleanup(h) } }
+        let (a, b) = (UUID(), UUID())
+        #expect(await h.world.report(strokeIDs: [a, b, a], reason: .hate, blockAuthor: true)) // queued before connecting
+        await h.world.start()
+        try await wait { await h.peer.reports().count == 1 }
+        let sent = try #require(await h.peer.reports().first)
+        #expect(sent.strokeIDs == [a, b] && sent.reason == .hate && sent.blockAuthor)
+        try await wait { await h.world.queuedReports == 0 }
+    }
+
+    @Test func reportsWaitForAV5ConnectionAndBannedDropsThem() async throws {
+        let old = try await make(profile: .messagePackV4)
+        defer { Task { await cleanup(old) } }
+        await old.world.report(strokeIDs: [UUID()], reason: .spam, blockAuthor: false)
+        await old.world.start()
+        try await wait { await old.world.snapshot().status == .live }
+        try await Task.sleep(for: .milliseconds(200))
+        let queued = await old.world.queuedReports
+        #expect(await old.peer.reports().isEmpty)
+        #expect(queued == 1)
+
+        let h = try await make(profile: .messagePackV5)
+        defer { Task { await cleanup(h) } }
+        await h.peer.failReports("banned")
+        await h.world.report(strokeIDs: [UUID()], reason: .other, blockAuthor: false)
+        await h.world.start()
+        try await wait { await h.world.snapshot().issue == .banned }
+        #expect(await h.world.queuedReports == 0)
+        #expect(await h.peer.reports().count == 1) // not retried
+    }
+
+    @Test func bannedCreateIsRejectedAndReported() async throws {
+        let h = try await make(profile: .messagePackV5)
+        defer { Task { await cleanup(h) } }
+        await h.peer.banCreates()
+        await h.world.start()
+        try await wait { await h.world.snapshot().status == .live }
+        _ = try await h.world.enqueue(try payload(x: 0).drawable)
+        try await wait { let state = await h.world.snapshot(); return state.issue == .banned && state.pendingCount == 0 }
     }
 }

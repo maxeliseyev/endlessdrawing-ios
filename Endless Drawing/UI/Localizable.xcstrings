@@ -11,12 +11,42 @@
         }
       }
     },
+    "Before you draw" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прежде чем рисовать"
+          }
+        }
+      }
+    },
     "Brush" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Кисть"
+          }
+        }
+      }
+    },
+    "Cancel" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отмена"
+          }
+        }
+      }
+    },
+    "Cancel report" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отменить жалобу"
           }
         }
       }
@@ -91,6 +121,16 @@
         }
       }
     },
+    "Contact support" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Написать в поддержку"
+          }
+        }
+      }
+    },
     "Custom color" : {
       "localizations" : {
         "ru" : {
@@ -101,12 +141,72 @@
         }
       }
     },
+    "Drawing is no longer available for this device because of a moderation decision." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рисование на этом устройстве недоступно по решению модерации."
+          }
+        }
+      }
+    },
     "Drawing storage could not be opened. Your existing identity and pending drawings have not been replaced." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось открыть хранилище. Существующий ключ владельца и очередь рисунков не заменены."
+          }
+        }
+      }
+    },
+    "Everything here is public and stays visible to everyone." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всё здесь публично и остаётся видно всем."
+          }
+        }
+      }
+    },
+    "Hate or harassment" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ненависть или травля"
+          }
+        }
+      }
+    },
+    "Hide everything from this author" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скрыть всё от этого автора"
+          }
+        }
+      }
+    },
+    "I agree" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Принимаю"
+          }
+        }
+      }
+    },
+    "Illegal content" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Незаконное"
           }
         }
       }
@@ -157,6 +257,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Metal недоступен на этом устройстве."
+          }
+        }
+      }
+    },
+    "More" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ещё"
+          }
+        }
+      }
+    },
+    "No sexual, violent, hateful or illegal drawings — they are removed and their authors blocked." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никаких сексуальных, жестоких, оскорбительных или незаконных рисунков — их удаляют, а авторов блокируют."
           }
         }
       }
@@ -242,6 +362,36 @@
         }
       }
     },
+    "Report" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пожаловаться"
+          }
+        }
+      }
+    },
+    "Report drawing…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пожаловаться…"
+          }
+        }
+      }
+    },
+    "Reported drawings disappear for you right away. We review reports within 24 hours." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отмеченное сразу исчезает у вас. Мы рассматриваем жалобы в течение 24 часов."
+          }
+        }
+      }
+    },
     "Reset view" : {
       "localizations" : {
         "ru" : {
@@ -283,12 +433,72 @@
         }
       }
     },
+    "Selected: %lld" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрано: %lld"
+          }
+        }
+      }
+    },
+    "Send" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправить"
+          }
+        }
+      }
+    },
+    "Sexual content" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сексуальное"
+          }
+        }
+      }
+    },
     "Shared canvas" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Общий холст"
+          }
+        }
+      }
+    },
+    "Show hidden drawings" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать скрытое"
+          }
+        }
+      }
+    },
+    "Something else" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Другое"
+          }
+        }
+      }
+    },
+    "Spam or flooding" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спам или засорение холста"
           }
         }
       }
@@ -309,6 +519,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Квадрат"
+          }
+        }
+      }
+    },
+    "Tap drawings to report" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Коснитесь рисунков, чтобы пожаловаться"
+          }
+        }
+      }
+    },
+    "Terms of Use" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Условия использования"
+          }
+        }
+      }
+    },
+    "Thanks. Hidden for you — we review reports within 24 hours." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спасибо. Скрыто у вас — мы рассмотрим жалобу в течение 24 часов."
           }
         }
       }
@@ -379,6 +619,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Отменить"
+          }
+        }
+      }
+    },
+    "Violence or threats" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Насилие или угрозы"
+          }
+        }
+      }
+    },
+    "What’s wrong?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Что не так?"
           }
         }
       }

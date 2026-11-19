@@ -116,9 +116,12 @@ nonisolated struct ServerStroke: Decodable, Equatable, Sendable {
     let payload: StrokePayload
     let sequence: Int64
     let own: Bool
+    /// v5 only: this viewer's tag for the author (22 base64url characters), for local blocking.
+    let author: String?
 
-    init(payload: StrokePayload, sequence: Int64, own: Bool) throws {
+    init(payload: StrokePayload, sequence: Int64, own: Bool, author: String? = nil) throws {
         self.payload = payload; self.sequence = try WireLimits.sequence(sequence); self.own = own
+        self.author = try author.map(Self.authorTag)
     }
 
     init(from decoder: Decoder) throws {
@@ -126,9 +129,25 @@ nonisolated struct ServerStroke: Decodable, Equatable, Sendable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         sequence = try WireLimits.sequence(values.decode(Int64.self, forKey: .seq))
         own = try values.decode(Bool.self, forKey: .own)
+        // Required in v5, absent before: a profile mismatch is a protocol error, never guessed.
+        let version = decoder.userInfo[WireDecodingContext.protocolVersion] as? Int ?? 1
+        if version >= 5 { author = try Self.authorTag(values.decode(String.self, forKey: .author)) }
+        else if values.contains(.author) { throw DrawingDataError.invalidMessage }
+        else { author = nil }
     }
 
-    private enum CodingKeys: String, CodingKey { case seq, own }
+    static func authorTag(_ value: String) throws -> String {
+        guard value.utf8.count == 22, value.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0)
+            || (97...122).contains($0) || $0 == 45 || $0 == 95 }) else { throw DrawingDataError.invalidMessage }
+        return value
+    }
+
+    private enum CodingKeys: String, CodingKey { case seq, own, author }
+}
+
+/// v5 report reasons (backend docs/protocol-v5-safety.md).
+nonisolated enum ReportReason: String, CaseIterable, Codable, Sendable {
+    case sexual, violence, hate, illegal, spam, other
 }
 
 nonisolated struct WireBounds: Codable, Equatable, Sendable {
@@ -165,6 +184,10 @@ nonisolated enum ClientMessage: Encodable, Sendable {
     case fetch(subscriptionID: String, token: UUID, batch: Int, strokeIDs: [UUID], final: Bool)
     case create(requestID: String, stroke: StrokePayload)
     case delete(requestID: String, strokeID: UUID)
+    /// v5: 1–20 strokes; the codec refuses it on earlier profiles.
+    case report(requestID: String, strokeIDs: [UUID], reason: ReportReason, blockAuthor: Bool)
+
+    static let maximumReportStrokes = 20
 
     func jsonData() throws -> Data {
         let encoder = JSONEncoder()
@@ -211,6 +234,15 @@ nonisolated enum ClientMessage: Encodable, Sendable {
             try values.encode("stroke.delete", forKey: .type)
             try values.encode(WireLimits.identifier(requestID), forKey: .requestID)
             try values.encode(strokeID.uuidString.lowercased(), forKey: .strokeID)
+        case .report(let requestID, let strokeIDs, let reason, let blockAuthor):
+            guard (1...Self.maximumReportStrokes).contains(strokeIDs.count), Set(strokeIDs).count == strokeIDs.count else {
+                throw DrawingDataError.invalidMessage
+            }
+            try values.encode("stroke.report", forKey: .type)
+            try values.encode(WireLimits.identifier(requestID), forKey: .requestID)
+            try values.encode(strokeIDs.map { $0.uuidString.lowercased() }, forKey: .strokeIDs)
+            try values.encode(reason, forKey: .reason)
+            try values.encode(blockAuthor, forKey: .blockAuthor)
         }
     }
 
@@ -218,6 +250,7 @@ nonisolated enum ClientMessage: Encodable, Sendable {
         case type, bounds, stroke, batch, final
         case sessionSecret = "session_secret", subscriptionID = "subscription_id", visibleBounds = "visible_bounds"
         case requestID = "request_id", strokeID = "stroke_id", snapshotToken = "snapshot_token", strokeIDs = "stroke_ids"
+        case reason, blockAuthor = "block_author"
     }
 }
 
@@ -245,6 +278,7 @@ nonisolated enum ServerMessage: Decodable, Equatable, Sendable {
     case deleted(id: String, strokeID: UUID, sequence: Int64)
     case createAcknowledged(requestID: String, stroke: ServerStroke)
     case deleteAcknowledged(requestID: String, strokeID: UUID, sequence: Int64, alreadyDeleted: Bool)
+    case reportAcknowledged(requestID: String, reportID: UUID)
     case error(requestID: String?, subscriptionID: String?, code: String)
 
     static func decode(_ data: Data) throws -> Self {
@@ -332,6 +366,9 @@ nonisolated enum ServerMessage: Decodable, Equatable, Sendable {
             case "stroke.delete":
                 self = .deleteAcknowledged(requestID: requestID, strokeID: try strokeID(), sequence: try sequence(),
                                            alreadyDeleted: try values.decode(Bool.self, forKey: .alreadyDeleted))
+            case "stroke.report":
+                guard version >= 5 else { throw DrawingDataError.invalidMessage }
+                self = .reportAcknowledged(requestID: requestID, reportID: try StrokePayload.uuid(values.decode(String.self, forKey: .reportID)))
             default: throw DrawingDataError.invalidMessage
             }
         case "error":
@@ -345,7 +382,7 @@ nonisolated enum ServerMessage: Decodable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case type, spawn, x, y, strokes, stroke, seq, operation, code, batch, reason
         case protocolVersion = "protocol_version", subscriptionID = "subscription_id"
-        case requestID = "request_id", strokeID = "stroke_id", alreadyDeleted = "already_deleted"
+        case requestID = "request_id", strokeID = "stroke_id", alreadyDeleted = "already_deleted", reportID = "report_id"
         case snapshotToken = "snapshot_token", strokeCount = "stroke_count", pointCount = "point_count", strokeIDs = "stroke_ids"
     }
 }

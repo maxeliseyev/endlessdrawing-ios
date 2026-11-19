@@ -21,9 +21,11 @@ nonisolated enum TransportProfile: Sendable, Equatable {
     static let messagePackProtocol = "endless-drawing.msgpack.v2"
     static let manifestProtocol = "endless-drawing.msgpack.v3"
     static let priorityProtocol = "endless-drawing.msgpack.v4"
+    static let safetyProtocol = "endless-drawing.msgpack.v5"
     static let jsonProtocol = "endless-drawing.json.v1"
-    /// v3 adds manifest + fetch (cached subscribe); v4 adds visible-first snapshots (`visible_bounds`).
-    case legacyJSONV1, jsonV1, messagePackV2, messagePackV3, messagePackV4
+    /// v3 adds manifest + fetch (cached subscribe); v4 adds visible-first snapshots (`visible_bounds`);
+    /// v5 adds per-viewer author tags and `stroke.report` (backend docs/protocol-v5-safety.md).
+    case legacyJSONV1, jsonV1, messagePackV2, messagePackV3, messagePackV4, messagePackV5
 
     var protocolVersion: Int {
         switch self {
@@ -31,11 +33,13 @@ nonisolated enum TransportProfile: Sendable, Equatable {
         case .messagePackV2: 2
         case .messagePackV3: 3
         case .messagePackV4: 4
+        case .messagePackV5: 5
         }
     }
     var isMessagePack: Bool { protocolVersion >= 2 }
     var supportsManifest: Bool { protocolVersion >= 3 }
     var requiresVisibleBounds: Bool { protocolVersion >= 4 }
+    var supportsReports: Bool { protocolVersion >= 5 }
     var maximumServerBytes: Int { isMessagePack ? 256 * 1024 : WireLimits.maximumServerBytes }
 }
 
@@ -44,7 +48,7 @@ nonisolated enum TransportPolicy: Sendable, Equatable {
     case negotiated, legacyJSONV1
     /// Preference order; the server picks the first one it has enabled.
     var offeredProtocols: [String] {
-        self == .negotiated ? [TransportProfile.priorityProtocol, TransportProfile.manifestProtocol,
+        self == .negotiated ? [TransportProfile.safetyProtocol, TransportProfile.priorityProtocol, TransportProfile.manifestProtocol,
                                TransportProfile.messagePackProtocol, TransportProfile.jsonProtocol] : []
     }
     func selected(_ value: String?) throws -> TransportProfile {
@@ -53,6 +57,7 @@ nonisolated enum TransportPolicy: Sendable, Equatable {
             return .legacyJSONV1
         }
         switch value {
+        case TransportProfile.safetyProtocol: return .messagePackV5
         case TransportProfile.priorityProtocol: return .messagePackV4
         case TransportProfile.manifestProtocol: return .messagePackV3
         case TransportProfile.messagePackProtocol: return .messagePackV2
@@ -81,6 +86,8 @@ nonisolated struct SessionCodec: Sendable {
             if case .subscribeCached = message, !profile.supportsManifest { throw TransportFailure.malformedMessage }
         case .fetch:
             guard profile.supportsManifest else { throw TransportFailure.malformedMessage }
+        case .report:
+            guard profile.supportsReports else { throw TransportFailure.malformedMessage }
         default: break
         }
         do {
