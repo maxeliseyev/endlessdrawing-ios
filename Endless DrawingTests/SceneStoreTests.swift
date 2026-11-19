@@ -143,4 +143,59 @@ struct SceneStoreTests {
             #expect(region.subscription.minY >= -1e9 && region.subscription.maxY <= 1e9)
         }
     }
+
+    // MARK: - Strokes that only left the area (pan)
+
+    private func line(_ sequence: Int64, x: Double, points: Int = 2) throws -> ServerStroke {
+        let path = (0..<points).map { WorldPoint(x: x + Double($0 % 2) * 10, y: Double($0 % 50)) }
+        let payload = try StrokePayload(id: UUID(), points: path, brush: .round, width: 6, color: "#202020", opacity: 1)
+        return try M2TestSupport.confirmed(payload, sequence: sequence, own: false)
+    }
+
+    /// Panning keeps strokes that merely left the area (drawn, reusable by the manifest) and still drops
+    /// a stroke missing inside the new area, which means it was deleted.
+    @Test func panKeepsStrokesThatOnlyLeftTheAreaAndDropsDeletedOnes() throws {
+        let a = try line(1, x: -80), b = try line(2, x: 60), c = try line(3, x: 150)
+        let first = try bounds(), right = try WireBounds(minX: 0, minY: -100, maxX: 200, maxY: 100)
+        var scene = SceneStore()
+        scene.subscribe(id: "s1", bounds: first, unordered: true); try scene.begin(id: "s1")
+        try scene.chunk(id: "s1", strokes: [a, b]); try scene.end(id: "s1")
+        scene.subscribe(id: "s2", bounds: right, unordered: true)
+        #expect(scene.ordered(hidden: []).map(\.server.sequence) == [1, 2]) // nothing blinks while loading
+        try scene.begin(id: "s2"); try scene.chunk(id: "s2", strokes: [c]); try scene.end(id: "s2")
+        #expect(scene.ordered(hidden: []).map(\.server.sequence) == [1, 3]) // b was deleted inside the area
+        #expect(scene.cached(a.payload.id) != nil) // pan back: the manifest reuses it, nothing to download
+        scene.subscribe(id: "s3", bounds: first, unordered: true); try scene.begin(id: "s3")
+        try scene.end(id: "s3") // authoritative again for the left side: a was deleted meanwhile
+        #expect(scene.ordered(hidden: []).map(\.server.sequence) == [3])
+    }
+
+    /// Out-of-area strokes are a bounded cache: farthest dropped first, and they yield room to the
+    /// current subscription instead of making a dense area fail with `capacity`.
+    @Test func outsideCacheIsBoundedAndYieldsToTheCurrentArea() throws {
+        let perGroup = SceneStore.maximumOutsidePoints / 2 / 2000
+        var sequence: Int64 = 0
+        func group(x: Double, count: Int) throws -> [ServerStroke] {
+            try (0..<count).map { _ in sequence += 1; return try line(sequence, x: x, points: 2000) }
+        }
+        let far = try group(x: -9000, count: perGroup), near = try group(x: -500, count: perGroup)
+        let middle = try group(x: -3000, count: perGroup)
+        var scene = SceneStore()
+        let wide = try WireBounds(minX: -10_000, minY: -100, maxX: 10_000, maxY: 100)
+        scene.subscribe(id: "wide", bounds: wide, unordered: true); try scene.begin(id: "wide")
+        try scene.chunk(id: "wide", strokes: far + near + middle); try scene.end(id: "wide")
+        let area = try WireBounds(minX: 0, minY: -100, maxX: 1000, maxY: 100)
+        scene.subscribe(id: "pan", bounds: area, unordered: true); try scene.begin(id: "pan")
+        try scene.end(id: "pan")
+        let kept = Set(scene.ordered(hidden: []).map(\.server.payload.id))
+        #expect(kept.count == 2 * perGroup)
+        #expect(!far.contains { kept.contains($0.payload.id) })
+        // A dense new area needs more than the room left: kept strokes give way, no capacity failure.
+        let dense = try group(x: 500, count: (SceneStore.maximumPoints - SceneStore.maximumOutsidePoints) / 2000 + 1)
+        scene.subscribe(id: "dense", bounds: area, unordered: true); try scene.begin(id: "dense")
+        try scene.chunk(id: "dense", strokes: dense); try scene.end(id: "dense")
+        let after = scene.ordered(hidden: [])
+        #expect(after.count < dense.count + 2 * perGroup)
+        #expect(Set(dense.map(\.payload.id)).isSubset(of: Set(after.map(\.server.payload.id))))
+    }
 }

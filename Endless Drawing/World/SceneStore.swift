@@ -15,6 +15,9 @@ nonisolated struct SceneStroke: Sendable, Equatable {
 nonisolated struct SceneStore {
     static let maximumStrokes = 20_000
     static let maximumPoints = 1_000_000
+    /// Strokes that only left the subscription (pan) stay cached up to this many points, nearest first:
+    /// panning back must not blank and re-download them (same rule as the web client).
+    static let maximumOutsidePoints = 400_000
     private(set) var subscriptionID: String?
     private(set) var bounds: WireBounds?
     private(set) var loading = false
@@ -45,9 +48,12 @@ nonisolated struct SceneStore {
         // Previously shown staging can stay as bounded stale display, never complete membership.
         if let staging { confirmed.merge(staging) { _, new in new } }
         confirmed.merge(acknowledgements) { _, new in new }
-        confirmed = confirmed.filter { tombstones[$0.key] == nil && $0.value.extent.intersects(bounds) }
+        // Strokes outside the new bounds keep being drawn (bounded); the end below decides what stays.
+        let previous = confirmed.filter { tombstones[$0.key] == nil }
+        confirmed = previous.filter { $0.value.extent.intersects(bounds) }
         subscriptionID = id; self.bounds = bounds; loading = true
         staging = nil; acknowledgements.removeAll(); lastSnapshotSequence = 0
+        keepOutside(previous, of: bounds)
         rebuildCosts()
     }
 
@@ -80,12 +86,35 @@ nonisolated struct SceneStore {
 
     mutating func end(id: String) throws {
         guard id == subscriptionID else { return }
-        guard loading, let staging else { throw SceneFailure.inconsistent }
+        guard loading, let staging, let bounds else { throw SceneFailure.inconsistent }
+        let previous = confirmed
         confirmed = staging
         confirmed.merge(acknowledgements) { _, new in new }
         confirmed = confirmed.filter { tombstones[$0.key] == nil }
         self.staging = nil; acknowledgements.removeAll(); loading = false
+        // Missing from the snapshot and inside the bounds = deleted. Entirely outside = only left the area.
+        keepOutside(previous.filter { tombstones[$0.key] == nil }, of: bounds)
         rebuildCosts()
+    }
+
+    /// Adds `previous` records lying entirely outside `bounds` back to `confirmed`, nearest first, within
+    /// `maximumOutsidePoints` and the scene limits. Out of the area no delete events arrive, so such a stroke
+    /// may be stale until a snapshot (or v3 manifest) of its area runs again, which is authoritative. The
+    /// client extent is never smaller than the server bbox, so nothing the server would have listed is kept.
+    private mutating func keepOutside(_ previous: [UUID: SceneStroke], of bounds: WireBounds) {
+        let distance = { (e: StrokeExtent) in Self.squaredDistance(e, bounds) }
+        let outside = previous.values
+            .filter { confirmed[$0.server.payload.id] == nil && !$0.extent.intersects(bounds) }
+            .sorted { distance($0.extent) < distance($1.extent) }
+        var total = confirmed.values.reduce(0) { $0 + $1.server.payload.points.count }
+        var kept = 0
+        for record in outside {
+            let count = record.server.payload.points.count
+            guard kept + count <= Self.maximumOutsidePoints, total + count <= Self.maximumPoints,
+                  confirmed.count < Self.maximumStrokes else { continue }
+            confirmed[record.server.payload.id] = record
+            kept += count; total += count
+        }
     }
 
     mutating func created(id: String, stroke: ServerStroke) throws {
@@ -166,11 +195,34 @@ nonisolated struct SceneStore {
         let id = value.server.payload.id
         if pointCosts[id] == nil {
             let count = value.server.payload.points.count
+            if pointCosts.count >= Self.maximumStrokes || points + count > Self.maximumPoints { evictOutside(toFit: count) }
             guard pointCosts.count < Self.maximumStrokes, points + count <= Self.maximumPoints else { throw SceneFailure.capacity }
             pointCosts[id] = count; points += count
         }
         guard sequenceIDs[value.server.sequence] != nil || sequenceIDs.count < Self.maximumStrokes * 2 else { throw SceneFailure.capacity }
         sequenceIDs[value.server.sequence] = id
+    }
+
+    /// Kept out-of-area strokes are only a cache: the current subscription's own members always win the room.
+    private mutating func evictOutside(toFit count: Int) {
+        guard let bounds else { return }
+        let distance = { (e: StrokeExtent) in Self.squaredDistance(e, bounds) }
+        let victims = confirmed.values
+            .filter { !$0.extent.intersects(bounds) && staging?[$0.server.payload.id] == nil }
+            .sorted { distance($0.extent) > distance($1.extent) }
+        for victim in victims {
+            guard pointCosts.count >= Self.maximumStrokes || points + count > Self.maximumPoints else { return }
+            let id = victim.server.payload.id
+            confirmed[id] = nil
+            if let cost = pointCosts.removeValue(forKey: id) { points -= cost }
+            if sequenceIDs[victim.server.sequence] == id { sequenceIDs[victim.server.sequence] = nil }
+        }
+    }
+
+    private static func squaredDistance(_ e: StrokeExtent, _ bounds: WireBounds) -> Double {
+        let dx = max(bounds.minX - e.maxX, e.minX - bounds.maxX, 0)
+        let dy = max(bounds.minY - e.maxY, e.minY - bounds.maxY, 0)
+        return dx * dx + dy * dy
     }
 
     private mutating func upsert(_ stroke: ServerStroke, acknowledged: Bool) throws {
