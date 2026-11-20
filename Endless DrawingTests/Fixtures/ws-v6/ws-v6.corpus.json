@@ -1,0 +1,58 @@
+[
+  {
+    "name": "welcome-compact",
+    "value": {
+      "type": "hello.ack",
+      "protocol_version": 6
+    }
+  },
+  {
+    "name": "snapshot-compact",
+    "value": {
+      "type": "viewport.snapshot.chunk",
+      "subscription_id": "00000000-0000-4000-8000-000000000001",
+      "strokes": [
+        {
+          "id": "00000000-0000-4000-8000-000000000010",
+          "path": [160, -40, 1, 1, 127, -32, -33, 128, -16000000000, 16000000000],
+          "brush": "round",
+          "width": 4.5,
+          "color": "#E46C60",
+          "opacity": 0.75,
+          "seq": 42,
+          "own": false,
+          "author": "AAAAAAAAAAAAAAAAAAAAAA"
+        },
+        {
+          "id": "00000000-0000-4000-8000-000000000011",
+          "path": [0, 0],
+          "brush": "spray",
+          "width": 64,
+          "color": "#202020",
+          "opacity": 1,
+          "seq": 43,
+          "own": true,
+          "author": "BBBBBBBBBBBBBBBBBBBBBB"
+        }
+      ]
+    }
+  },
+  {
+    "name": "created-compact",
+    "value": {
+      "type": "stroke.created",
+      "subscription_id": "00000000-0000-4000-8000-000000000001",
+      "stroke": {
+        "id": "00000000-0000-4000-8000-000000000012",
+        "path": [-80, 24, 3, -2, 3, -2],
+        "brush": "chisel",
+        "width": 12,
+        "color": "#7195D0",
+        "opacity": 0.5,
+        "seq": 44,
+        "own": false,
+        "author": "CCCCCCCCCCCCCCCCCCCCCC"
+      }
+    }
+  }
+]

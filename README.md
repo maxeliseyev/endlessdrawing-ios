@@ -5,11 +5,13 @@
 ## Основа
 
 - SwiftUI для интерфейса, UIKit для Pencil/finger input, Metal / MetalKit для рендера.
-- Общий мир с веб-клиентом: `wss://endlessdrawing.com/ws`, negotiated MessagePack v2 / JSON v1.
+- Общий мир с веб-клиентом: `wss://endlessdrawing.com/ws`, negotiated MessagePack v6 → v5 → v4 → v3 → v2 → JSON v1.
 - Keychain для секрета владельца; без регистрации и отдельного аккаунта.
 - Только холст при запуске; инструменты и состояние подключения — в контекстной палитре.
 
 ## Текущий статус
+
+**WS v6:** клиент первым предлагает `endless-drawing.msgpack.v6`. Входящий `path` раскодируется из целых дельт 1/16 в обычные точки для Metal; исходящие `points` и durable journal сохраняют полную точность. Ack проверяется по независимо округлённым точкам, undo и повтор UUID не меняются. `WS_COMPACT_ENABLED=false` на backend выбирает v5 для новых соединений без обновления клиента. Контракт и проверки — [транспорт](docs/transport-evolution.md).
 
 **M2.3: Canvas подключён к общему миру в Debug и Release.** Snapshot загружается постепенно, приходят live updates. Finalized stroke сначала сохраняется в локальную очередь, затем отправляется; ack подтверждает результат. При потере соединения pending сохраняется и повторяется с прежним UUID. Undo использует серверное удаление собственных действий, включая компенсацию unknown create.
 
@@ -52,4 +54,4 @@ SPM загружает pinned `msgpack-swift` 2.0.6. Warnings-as-errors уже �
 - Wire: [JSON v1](../endless-drawing-backend/docs/protocol.md), [MessagePack v2](../endless-drawing-backend/docs/protocol-v2-msgpack.md).
 - Визуальный контракт: [brushes.md](../endless-drawing-frontend/docs/brushes.md).
 
-Документы соседних репозиториев — источники совместимости, не файлы этого приложения. Native не меняет протокол/геометрию самостоятельно и пока не предлагает v3.
+Документы соседних репозиториев — источники совместимости, не файлы этого приложения. Native не меняет протокол/геометрию самостоятельно; нормативный [v6](../endless-drawing-backend/docs/protocol-v6-compact.md) используется только после согласования subprotocol.

@@ -4,22 +4,23 @@ import Testing
 @testable import Endless_Drawing
 
 struct SessionCodecTests {
-    @Test func negotiatesOfferedV5ThroughV1InPreferenceOrderAndNeverGuesses() throws {
+    @Test func negotiatesOfferedV6ThroughV1InPreferenceOrderAndNeverGuesses() throws {
         let policy = TransportPolicy.negotiated
-        #expect(policy.offeredProtocols == ["endless-drawing.msgpack.v5", "endless-drawing.msgpack.v4", "endless-drawing.msgpack.v3",
+        #expect(policy.offeredProtocols == ["endless-drawing.msgpack.v6", "endless-drawing.msgpack.v5", "endless-drawing.msgpack.v4", "endless-drawing.msgpack.v3",
                                             "endless-drawing.msgpack.v2", "endless-drawing.json.v1"])
+        #expect(try policy.selected(TransportProfile.compactProtocol) == .messagePackV6)
         #expect(try policy.selected(TransportProfile.safetyProtocol) == .messagePackV5)
         #expect(try policy.selected(TransportProfile.priorityProtocol) == .messagePackV4)
         #expect(try policy.selected(TransportProfile.manifestProtocol) == .messagePackV3)
         #expect(try policy.selected(TransportProfile.messagePackProtocol) == .messagePackV2)
         #expect(try policy.selected(TransportProfile.jsonProtocol) == .jsonV1)
-        for value in [nil, "", "endless-drawing.msgpack.v6", "endless-drawing.json.v2", "unoffered-profile"] {
+        for value in [nil, "", "endless-drawing.msgpack.v7", "endless-drawing.json.v2", "unoffered-profile"] {
             #expect(throws: TransportFailure.unexpectedProfile) { try policy.selected(value) }
         }
         #expect(TransportPolicy.legacyJSONV1.offeredProtocols.isEmpty)
         #expect(try TransportPolicy.legacyJSONV1.selected(nil) == .legacyJSONV1)
         #expect(throws: TransportFailure.unexpectedProfile) { try TransportPolicy.legacyJSONV1.selected(TransportProfile.jsonProtocol) }
-        for profile in [TransportProfile.messagePackV2, .messagePackV3, .messagePackV4, .messagePackV5] {
+        for profile in [TransportProfile.messagePackV2, .messagePackV3, .messagePackV4, .messagePackV5, .messagePackV6] {
             #expect(profile.isMessagePack && profile.maximumServerBytes == 256 * 1024)
         }
     }

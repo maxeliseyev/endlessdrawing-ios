@@ -177,11 +177,11 @@ actor OperationJournal {
     }
 
     @discardableResult
-    func acknowledgeCreate(operationID: UUID, stroke: ServerStroke) throws -> Bool {
+    func acknowledgeCreate(operationID: UUID, stroke: ServerStroke, compact: Bool = false) throws -> Bool {
         try transaction { next in
             guard let index = next.operations.firstIndex(where: { $0.id == operationID }) else { return false }
             let operation = next.operations[index]
-            guard case .create(let draft) = operation.payload, draft == stroke.payload, stroke.own,
+            guard case .create(let draft) = operation.payload, draft.matchesAcknowledgement(stroke.payload, compact: compact), stroke.own,
                   operation.mayHaveBeenSent else { throw DrawingDataError.invalidTransition }
             next.operations.remove(at: index)
             if operation.cancelled {

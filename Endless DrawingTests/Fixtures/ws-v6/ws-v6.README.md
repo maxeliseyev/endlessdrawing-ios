@@ -1,0 +1,3 @@
+# WS v6 compact-path fixtures
+
+Synthetic v6 server messages (docs/protocol-v6-compact.md): integer `path` instead of `points`, including int8/int16 boundaries and the largest world coordinate (±10⁹ · 16). No real secrets or drawings. Canonical copy is backend tests/fixtures/ws-v6, frontend copy uses the same SHA-256 manifest. Regenerate TS with node scripts/generate-wire-fixtures.mjs <path to ws-v6> in frontend. Regenerate Rust with UPDATE_WS_FIXTURES=1 WS_FIXTURES_VERSION=ws-v6 cargo test --lib codec::tests::export_rust_fixtures -- --ignored in backend. Copy both encoder outputs and update hashes together after reviewing changes. Ordinary tests never regenerate fixtures.
