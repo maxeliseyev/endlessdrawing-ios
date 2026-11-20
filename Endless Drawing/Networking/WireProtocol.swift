@@ -83,11 +83,32 @@ nonisolated struct StrokePayload: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let id = try Self.uuid(values.decode(String.self, forKey: .id))
-        var list = try values.nestedUnkeyedContainer(forKey: .points)
-        guard let count = list.count, (1...StrokeInput.maximumPoints).contains(count) else { throw DrawingDataError.invalidMessage }
+        let compact = (decoder.userInfo[WireDecodingContext.protocolVersion] as? Int ?? 1) >= 6
+        guard !values.contains(compact ? .points : .path) else { throw DrawingDataError.invalidMessage }
+        var list = try values.nestedUnkeyedContainer(forKey: compact ? .path : .points)
         var points: [WorldPoint] = []
-        points.reserveCapacity(count)
-        while !list.isAtEnd { points.append(try list.decode(WorldPoint.self)) }
+        if compact {
+            guard let count = list.count, (2...StrokeInput.maximumPoints * 2).contains(count), count.isMultiple(of: 2) else {
+                throw DrawingDataError.invalidMessage
+            }
+            points.reserveCapacity(count / 2)
+            var x: Int64 = 0, y: Int64 = 0
+            while !list.isAtEnd {
+                let dx = try list.decode(Int64.self), dy = try list.decode(Int64.self)
+                guard (-WireLimits.maximumSequence...WireLimits.maximumSequence).contains(dx),
+                      (-WireLimits.maximumSequence...WireLimits.maximumSequence).contains(dy) else { throw DrawingDataError.invalidMessage }
+                let nextX = x.addingReportingOverflow(dx), nextY = y.addingReportingOverflow(dy)
+                guard !nextX.overflow, !nextY.overflow,
+                      (-16_000_000_000...16_000_000_000).contains(nextX.partialValue),
+                      (-16_000_000_000...16_000_000_000).contains(nextY.partialValue) else { throw DrawingDataError.invalidMessage }
+                x = nextX.partialValue; y = nextY.partialValue
+                points.append(WorldPoint(x: Double(x) / 16, y: Double(y) / 16))
+            }
+        } else {
+            guard let count = list.count, (1...StrokeInput.maximumPoints).contains(count) else { throw DrawingDataError.invalidMessage }
+            points.reserveCapacity(count)
+            while !list.isAtEnd { points.append(try list.decode(WorldPoint.self)) }
+        }
         try self.init(id: id, points: points, brush: values.decode(BrushKind.self, forKey: .brush),
                       width: values.decode(Double.self, forKey: .width), color: values.decode(String.self, forKey: .color),
                       opacity: values.decode(Double.self, forKey: .opacity))
@@ -109,14 +130,24 @@ nonisolated struct StrokePayload: Codable, Equatable, Sendable {
         return id
     }
 
-    private enum CodingKeys: String, CodingKey { case id, points, brush, width, color, opacity }
+    /// A v6 ack contains independently rounded points, not the exact journal payload.
+    func matchesAcknowledgement(_ other: StrokePayload, compact: Bool) -> Bool {
+        guard compact else { return self == other }
+        guard id == other.id, brush == other.brush, width == other.width, color == other.color,
+              opacity == other.opacity, points.count == other.points.count else { return false }
+        return zip(points, other.points).allSatisfy { original, acknowledged in
+            (original.x * 16).rounded() / 16 == acknowledged.x && (original.y * 16).rounded() / 16 == acknowledged.y
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, points, path, brush, width, color, opacity }
 }
 
 nonisolated struct ServerStroke: Decodable, Equatable, Sendable {
     let payload: StrokePayload
     let sequence: Int64
     let own: Bool
-    /// v5 only: this viewer's tag for the author (22 base64url characters), for local blocking.
+    /// v5+: this viewer's tag for the author (22 base64url characters), for local blocking.
     let author: String?
 
     init(payload: StrokePayload, sequence: Int64, own: Bool, author: String? = nil) throws {

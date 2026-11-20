@@ -1,5 +1,16 @@
 # Эволюция транспорта: план для iPad
 
+## WS v6 — 20.11.2026
+
+Реализован [нормативный v6](../../endless-drawing-backend/docs/protocol-v6-compact.md): preference v6→v5→v4→v3→v2→JSON v1. Профиль неизменен в течение соединения. `WS_COMPACT_ENABLED=false` откатывает новые соединения к v5, не требуя старого backend image или миграции локального журнала.
+
+- Server `path` (2…4000 integer элементов) превращается в 1…2000 `WorldPoint`, накопление в integer space, деление на 16. Preflight запрещает даже целочисленные float-теги внутри path, unsafe integer, duplicate keys и прежние опасные структуры; лимит клиентских массивов остаётся 2000.
+- Snapshot/fetch, live и create ack используют один decoder. Chunk budget — 8192 **точек**, не элементов path. World/span/style/author guards остаются обязательными; синтетический snapshot fixture намеренно выходит за world/span и не разрешает ослабить domain guards.
+- Create/journal/retry сохраняют исходные float64. Только v6 ack сравнивается с каждой независимо округлённой исходной точкой (ties away from zero), остальные поля совпадают точно; v5 и ниже по-прежнему требуют полного равенства. Confirmed принимает серверную геометрию, undo/compensating delete прежние.
+- Pinned backend `ws-v6` corpus и SHA-256 скопированы без изменения содержимого, с префиксом имён `ws-v6.` для плоского Xcode resource bundle; проверяются Rust и TS bytes.
+
+Проверки: Debug и Release Simulator iOS 27.0 — suite из 176 тестов (opt-in network/performance gates пропущены), включая compact fixtures/guards, journal ack и существующие transport/world tests. Отдельно `LocalBackendTests` с пустой изолированной PostgreSQL DB прошёл на v6 и при `WS_COMPACT_ENABLED=false` на v5: четыре кисти с координатами вне сетки 1/16, legacy JSON observer, ownership, idempotent retry и undo. Ожидаемый профиль проверялся через `TEST_RUNNER_ENDLESS_EXPECT_WS_VERSION=6` / `5`, URL — `TEST_RUNNER_ENDLESS_LOCAL_BACKEND_WS=ws://127.0.0.1:3001/ws`. Opt-in production gates не запускались. Физический iPad и production не проверялись и не выкладывались.
+
 Статус: T1 уже подключён к общему Canvas в [M2.3](progress/m2-shared-canvas.md): WorldSession, scene, journal и четыре кисти, поверх M2.1/M2.2. Isolated backend/Postgres mutations и native read-only published WSS проверены. **T2/T3 подключены 18.11.2026** по опубликованному backend M3 (`5ac7ddf`): клиент предлагает `endless-drawing.msgpack.v4`, `…v3`, `…v2`, `endless-drawing.json.v1`. v4 — `visible_bounds` (видимое ∩ подписка) в каждой подписке; v3+ — cached subscribe внутри соединения после завершённого snapshot (`ManifestLoader`: manifest → reuse из сцены → fetch недостающих batch ≤1000, stop-and-wait), `snapshot.fallback` busy/scene_limit → full через 1 с, нарушение контракта → reconnect + full. Pinned fixtures `ws-v3`/`ws-v4` (префикс файлов), read-only production smoke выбрал v4. Physical iPad acceptance остаётся.
 
 ## 1. Источники и версии

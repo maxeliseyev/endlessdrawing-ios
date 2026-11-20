@@ -22,10 +22,11 @@ nonisolated enum TransportProfile: Sendable, Equatable {
     static let manifestProtocol = "endless-drawing.msgpack.v3"
     static let priorityProtocol = "endless-drawing.msgpack.v4"
     static let safetyProtocol = "endless-drawing.msgpack.v5"
+    static let compactProtocol = "endless-drawing.msgpack.v6"
     static let jsonProtocol = "endless-drawing.json.v1"
     /// v3 adds manifest + fetch (cached subscribe); v4 adds visible-first snapshots (`visible_bounds`);
     /// v5 adds per-viewer author tags and `stroke.report` (backend docs/protocol-v5-safety.md).
-    case legacyJSONV1, jsonV1, messagePackV2, messagePackV3, messagePackV4, messagePackV5
+    case legacyJSONV1, jsonV1, messagePackV2, messagePackV3, messagePackV4, messagePackV5, messagePackV6
 
     var protocolVersion: Int {
         switch self {
@@ -34,6 +35,7 @@ nonisolated enum TransportProfile: Sendable, Equatable {
         case .messagePackV3: 3
         case .messagePackV4: 4
         case .messagePackV5: 5
+        case .messagePackV6: 6
         }
     }
     var isMessagePack: Bool { protocolVersion >= 2 }
@@ -48,7 +50,7 @@ nonisolated enum TransportPolicy: Sendable, Equatable {
     case negotiated, legacyJSONV1
     /// Preference order; the server picks the first one it has enabled.
     var offeredProtocols: [String] {
-        self == .negotiated ? [TransportProfile.safetyProtocol, TransportProfile.priorityProtocol, TransportProfile.manifestProtocol,
+        self == .negotiated ? [TransportProfile.compactProtocol, TransportProfile.safetyProtocol, TransportProfile.priorityProtocol, TransportProfile.manifestProtocol,
                                TransportProfile.messagePackProtocol, TransportProfile.jsonProtocol] : []
     }
     func selected(_ value: String?) throws -> TransportProfile {
@@ -57,6 +59,7 @@ nonisolated enum TransportPolicy: Sendable, Equatable {
             return .legacyJSONV1
         }
         switch value {
+        case TransportProfile.compactProtocol: return .messagePackV6
         case TransportProfile.safetyProtocol: return .messagePackV5
         case TransportProfile.priorityProtocol: return .messagePackV4
         case TransportProfile.manifestProtocol: return .messagePackV3
@@ -129,7 +132,7 @@ nonisolated enum BoundedMessagePack {
     }
 
     static func decode<T: Decodable>(_ type: T.Type, from data: Data, protocolVersion: Int = 2) throws -> T {
-        try MessagePackPreflight.validate(data)
+        try MessagePackPreflight.validate(data, compact: protocolVersion >= 6)
         var decoder = MessagePackDecoder()
         decoder.userInfo[WireDecodingContext.protocolVersion] = protocolVersion
         return try decoder.decode(type, from: data)

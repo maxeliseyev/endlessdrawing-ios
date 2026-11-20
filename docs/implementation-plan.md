@@ -2,6 +2,8 @@
 
 ## 1. Статус и границы документа
 
+**20.11.2026 — WS v6 реализован:** negotiation v6→v5→v4→v3→v2→v1, bounded integer `path` decode, прежние float64 create/journal, проверка округлённого ack и undo. Контракт, fixtures и результаты — [transport-evolution.md](transport-evolution.md). Выкладка и физическая приёмка iPad не выполнялись.
+
 Основа согласована владельцем в текущем обсуждении: отдельное нативное iPad-приложение, SwiftUI + UIKit + Metal, общий WS backend и Keychain. Metal выбран для плавности и аппаратного ускорения на устройстве.
 
 Дополнительно принята транспортная эволюция из frontend docs: MessagePack v2, authoritative manifest с geometry fetch только отсутствующего, затем приоритет visible geometry перед prefetch. Эти изменения внедряются совместно с backend и имеют отдельные этапы/версии, а не включаются только на iPad. Статус, native API и rollout gates: [transport-evolution.md](transport-evolution.md).

@@ -417,13 +417,13 @@ actor WorldSession {
         case .deleted(let id, let strokeID, let sequence): try scene.deleted(id: id, strokeID: strokeID, sequence: sequence)
         case .createAcknowledged(let requestID, let stroke):
             guard let active = attempt, active.requestID == requestID else { return }
-            guard case .create(let payload) = active.operation.payload, payload == stroke.payload, stroke.own else {
+            guard case .create(let payload) = active.operation.payload, payload.matchesAcknowledgement(stroke.payload, compact: profile.protocolVersion >= 6), stroke.own else {
                 throw TransportFailure.malformedMessage
             }
             // Canonical commit is known before awaiting durable resolution; an overlapping UI command
             // must never observe neither the pending draft nor its confirmed geometry.
             try scene.acknowledged(stroke)
-            try await journal.acknowledgeCreate(operationID: active.operation.id, stroke: stroke)
+            try await journal.acknowledgeCreate(operationID: active.operation.id, stroke: stroke, compact: profile.protocolVersion >= 6)
             guard token == epoch else { return }
             if attempt?.requestID == requestID { attempt = nil }
             issue = nil

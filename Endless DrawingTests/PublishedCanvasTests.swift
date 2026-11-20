@@ -5,11 +5,11 @@ import Testing
 /// Manual read-only acceptance. Never enabled by ordinary tests or implicit application startup.
 struct PublishedCanvasTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["ENDLESS_NATIVE_READ_SMOKE"] == "1"), .timeLimit(.minutes(1)))
-    func nativeURLSessionReadsPublishedV5SnapshotWithoutMutatingWorld() async throws {
+    func nativeURLSessionReadsPublishedSnapshotWithoutMutatingWorld() async throws {
         let transport = WebSocketTransport(environment: .live)
         defer { Task { await transport.disconnect() } }
         let connection = try await transport.connect()
-        #expect(connection.profile == .messagePackV5)
+        #expect(connection.profile == .messagePackV6 || connection.profile == .messagePackV5)
         let secret = try SessionSecret(bytes: Data((0..<32).map { _ in UInt8.random(in: 0...255) }))
         try await transport.send(.hello(secret))
         var messages = connection.messages.makeAsyncIterator()
@@ -42,7 +42,7 @@ struct PublishedCanvasTests {
                 #expect(strokes <= 20_000 && points <= 1_000_000)
             case .snapshotEnd(let scope):
                 #expect(began && scope == id)
-                print("Published native read-only v5 PASS: \(strokes) strokes, \(points) points. No mutations sent.")
+                print("Published native read-only v\(connection.profile.protocolVersion) PASS: \(strokes) strokes, \(points) points. No mutations sent.")
                 await transport.disconnect()
                 return
             default: Issue.record("Unexpected message during read-only snapshot"); return

@@ -53,7 +53,7 @@ struct LocalBackendTests {
         await world.update(region: region); await world.start()
         try await wait { await world.snapshot().status == .live }
         let payloads = try [BrushKind.round, .square, .chisel, .spray].map {
-            try StrokePayload(id: UUID(), points: [WorldPoint(x: 12.125, y: -8.0625), WorldPoint(x: 40.25, y: 22.5)],
+            try StrokePayload(id: UUID(), points: [WorldPoint(x: 12.123456, y: -8.06789), WorldPoint(x: 40.25321, y: 22.51234)],
                               brush: $0, width: 6.25, color: "#abCDef", opacity: 0.5)
         }
         var sequences: [UUID: Int64] = [:]
@@ -68,7 +68,10 @@ struct LocalBackendTests {
         }
         #expect(await world.snapshot().confirmed.allSatisfy { $0.server.own })
         let retryConnection = try await duplicate.connect()
-        #expect(retryConnection.profile.isMessagePack) // v2/v3/v4 depending on the local backend gates
+        #expect(retryConnection.profile.isMessagePack) // v2–v6 depending on the local backend gates
+        if let raw = ProcessInfo.processInfo.environment["ENDLESS_EXPECT_WS_VERSION"], let expected = Int(raw) {
+            #expect(retryConnection.profile.protocolVersion == expected)
+        }
         try await duplicate.send(.hello(identity.secret))
         var retried = retryConnection.messages.makeAsyncIterator()
         guard case .hello = try await retried.next() else { Issue.record("Missing retry hello"); return }

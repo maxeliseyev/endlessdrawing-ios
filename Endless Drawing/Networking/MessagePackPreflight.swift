@@ -2,13 +2,13 @@ import Foundation
 
 /// Runs before the library decoder allocates containers or coerces numeric types.
 nonisolated enum MessagePackPreflight {
-    static func validate(_ data: Data, maximumBytes: Int = 256 * 1024) throws {
+    static func validate(_ data: Data, maximumBytes: Int = 256 * 1024, compact: Bool = false) throws {
         guard data.count <= maximumBytes else { throw TransportFailure.messageTooLarge }
         try data.withUnsafeBytes { bytes in
             guard let first = bytes.first, (0x80...0x8f).contains(first) || first == 0xde || first == 0xdf else {
                 throw TransportFailure.malformedMessage
             }
-            var scanner = Scanner(bytes: bytes, maximumBytes: maximumBytes)
+            var scanner = Scanner(bytes: bytes, maximumBytes: maximumBytes, compact: compact)
             try scanner.read(depth: 0)
             guard scanner.offset == bytes.count else { throw TransportFailure.malformedMessage }
         }
@@ -34,6 +34,7 @@ nonisolated enum MessagePackPreflight {
     private struct Scanner {
         let bytes: UnsafeRawBufferPointer
         let maximumBytes: Int
+        var compact = false
         var normalizeFloats = false
         var offset = 0
         var nodes = 0
@@ -56,10 +57,18 @@ nonisolated enum MessagePackPreflight {
         }
 
         @discardableResult
-        mutating func read(depth: Int, isKey: Bool = false) throws -> String? {
+        mutating func read(depth: Int, isKey: Bool = false, integerOnly: Bool = false, path: Bool = false) throws -> String? {
             nodes += 1
             guard nodes <= 65_536 else { throw TransportFailure.malformedMessage }
             let tag = bytes[try take(1)]
+            if integerOnly {
+                guard tag <= 0x7f || tag >= 0xe0 || (0xcc...0xcf).contains(tag) || (0xd0...0xd3).contains(tag) else {
+                    throw TransportFailure.malformedMessage
+                }
+            }
+            if path {
+                guard (0x90...0x9f).contains(tag) || tag == 0xdc || tag == 0xdd else { throw TransportFailure.malformedMessage }
+            }
             let stringLength: Int?
             switch tag {
             case 0xa0...0xbf: stringLength = Int(tag & 31)
@@ -116,7 +125,7 @@ nonisolated enum MessagePackPreflight {
             case 0xde, 0xdf: count = Int(try integer(bytes: tag == 0xde ? 2 : 4)); map = true
             default: throw TransportFailure.malformedMessage // nil, float32, binary, extensions and reserved tags
             }
-            guard depth < 8, count <= (map ? 16 : 2000), count * (map ? 2 : 1) <= bytes.count - offset else {
+            guard depth < 8, count <= (map ? 16 : (compact ? 4000 : 2000)), count * (map ? 2 : 1) <= bytes.count - offset else {
                 throw TransportFailure.malformedMessage
             }
             if map {
@@ -126,10 +135,10 @@ nonisolated enum MessagePackPreflight {
                           !["__proto__", "prototype", "constructor"].contains(key), keys.insert(key).inserted else {
                         throw TransportFailure.malformedMessage
                     }
-                    try read(depth: depth + 1)
+                    try read(depth: depth + 1, path: compact && key == "path")
                 }
             } else {
-                for _ in 0..<count { try read(depth: depth + 1) }
+                for _ in 0..<count { try read(depth: depth + 1, integerOnly: path) }
             }
             return nil
         }
