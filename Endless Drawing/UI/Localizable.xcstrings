@@ -6,7 +6,17 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Не удалось записать рисунок на iPad. Он пока только в памяти; повторите запись до закрытия приложения."
+            "value" : "Не удалось записать рисунок на устройство. Он пока только в памяти; повторите запись до закрытия приложения."
+          }
+        }
+      }
+    },
+    "Apple Pencil draws now; fingers move the canvas." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Теперь рисует Apple Pencil, а пальцы двигают холст."
           }
         }
       }
@@ -137,6 +147,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Свой цвет"
+          }
+        }
+      }
+    },
+    "Draw with finger" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рисовать пальцем"
           }
         }
       }
@@ -291,12 +311,12 @@
         }
       }
     },
-    "Offline — pending drawings remain on this iPad." : {
+    "Offline — pending drawings remain on this device." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Нет соединения — неотправленные рисунки остаются на этом iPad."
+            "value" : "Нет соединения — неотправленные рисунки остаются на этом устройстве."
           }
         }
       }

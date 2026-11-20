@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ContextPalette: View {
     @Bindable var model: CanvasModel
@@ -32,6 +33,11 @@ struct ContextPalette: View {
                     }
                     if !model.hiddenContent.isEmpty {
                         Button("Show hidden drawings", systemImage: "eye") { model.showHiddenContent() }
+                    }
+                    // iPhone has no Pencil: fingers always draw there.
+                    if UIDevice.current.userInterfaceIdiom == .pad {
+                        Toggle("Draw with finger", systemImage: "hand.draw",
+                               isOn: Binding(get: { model.fingersDraw }, set: { model.setFingerDrawing($0) }))
                     }
                     Link(destination: CanvasModel.termsURL) { Label("Terms of Use", systemImage: "doc.text") }
                     Link(destination: CanvasModel.supportURL) { Label("Contact support", systemImage: "envelope") }

@@ -1,5 +1,6 @@
 import Observation
 import SwiftUI
+import UIKit
 
 @MainActor
 @Observable
@@ -18,6 +19,7 @@ final class CanvasModel {
     private static let recentColorsKey = "recentColors"
     private static let hiddenStrokesKey = "hiddenStrokes", hiddenAuthorsKey = "hiddenAuthors"
     private static let termsKey = "acceptedTerms"
+    private static let fingerDrawingKey = "fingerDrawing", pencilSeenKey = "pencilSeen"
     /// Bump when /terms changes materially: everyone is asked again before drawing.
     static let termsVersion = "terms.v1"
     static let termsURL = URL(string: "https://endlessdrawing.com/terms")!
@@ -38,6 +40,13 @@ final class CanvasModel {
     /// Short, self-dismissing confirmation (e.g. after a report).
     var notice: String?
     var failure: String?
+    /// Explicit "Draw with finger" choice from the menu; nil is automatic (see `FingerDrawingPolicy`).
+    private(set) var fingerChoice: Bool?
+    private(set) var pencilSeen: Bool
+    var fingersDraw: Bool {
+        FingerDrawingPolicy.fingersDraw(choice: fingerChoice, pencilSeen: pencilSeen,
+                                        systemPencilOnly: UIPencilInteraction.prefersPencilOnlyDrawing)
+    }
     var canUndo = false
     var graphicsLimited = false
     private(set) var worldState: WorldRenderState?
@@ -68,6 +77,22 @@ final class CanvasModel {
                                       storedAuthors: defaults?.stringArray(forKey: Self.hiddenAuthorsKey) ?? [])
         // Only the live app (with persistent defaults) asks; tests and previews never block drawing.
         termsAccepted = defaults == nil || defaults?.string(forKey: Self.termsKey) == Self.termsVersion
+        fingerChoice = defaults?.object(forKey: Self.fingerDrawingKey) as? Bool
+        pencilSeen = defaults?.bool(forKey: Self.pencilSeenKey) ?? false
+    }
+
+    func setFingerDrawing(_ on: Bool) {
+        fingerChoice = on
+        defaults?.set(on, forKey: Self.fingerDrawingKey)
+    }
+
+    /// The first Pencil touch: in automatic mode fingers stop drawing and only move the canvas.
+    func pencilUsed() {
+        guard !pencilSeen else { return }
+        let drew = fingersDraw
+        pencilSeen = true
+        defaults?.set(true, forKey: Self.pencilSeenKey)
+        if drew, !fingersDraw { notice = String(localized: "Apple Pencil draws now; fingers move the canvas.") }
     }
 
     func acceptTerms() {
@@ -148,7 +173,7 @@ final class CanvasModel {
         case .loading: return String(localized: "Loading shared canvas…")
         case .blocked: return String(localized: "Connection paused. Open tools to retry.")
         case .dense: return String(localized: "This area is too dense. Zoom in to continue.")
-        case .offline, .stopped: return String(localized: "Offline — pending drawings remain on this iPad.")
+        case .offline, .stopped: return String(localized: "Offline — pending drawings remain on this device.")
         default: return String(localized: "Connecting to shared canvas…")
         }
     }

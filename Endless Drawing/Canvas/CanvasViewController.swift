@@ -19,9 +19,18 @@ final class CanvasViewController: UIViewController {
     private var input = StrokeInput()
     private var navigation = NavigationInput()
     private var camera = Camera()
-    private var pencilID: ObjectIdentifier?
+    /// The touch drawing the current stroke: a Pencil, or a finger in finger-drawing mode.
+    private var drawingID: ObjectIdentifier?
+    private var drawingWithFinger = false
     private var fingerIDs: [ObjectIdentifier: Int] = [:]
     private var nextFingerID = 0
+    /// Finger-drawing mode, decided when the first finger of a gesture lands and kept until all lift.
+    private var fingersDraw = false
+    private var fingerGesture = FingerGesture()
+    /// Latest screen position of every finger: navigation may start from fingers that were drawing.
+    private var fingerPoints: [Int: WorldPoint] = [:]
+    /// A finger that would draw but the terms are not accepted yet: asks once it is clearly a stroke.
+    private var termsCandidate: Int?
     private var longPress: Task<Void, Never>?
     private var longPressOrigin: WorldPoint?
     private var previousSize = CGSize.zero
@@ -217,57 +226,117 @@ final class CanvasViewController: UIViewController {
             // Taps (finger or Pencil) pick strokes; fingers still pan and zoom. Nothing is drawn.
             for touch in touches where touch.type == .pencil || touch.type == .direct { reportTaps[ObjectIdentifier(touch)] = screen(touch) }
         }
+        if fingerIDs.isEmpty { fingersDraw = model.fingersDraw && !model.reporting }
         // Handle Pencil first even when UIKit batches direct and Pencil touches together.
         for touch in touches where touch.type == .pencil && !model.reporting {
-            // App Review 1.2: the terms are accepted before anything is published.
-            guard model.termsAccepted else { model.termsPrompt = true; continue }
-            guard pencilID == nil, model.canDraw,
-                  !model.isShared || (sharedState?.pendingCount ?? 0) + volatileStrokes.count < 64 else { continue }
-            model.userInteracted(camera: camera)
-            longPress?.cancel()
-            navigation.blockUntilTouchesEnd()
-            pencilID = ObjectIdentifier(touch)
+            model.pencilUsed()
+            if drawingWithFinger { abandonFingerStroke() } // the Pencil wins over a finger stroke
+            fingerGesture.abandonDrawing()
+            guard drawingID == nil else { continue }
+            guard startStroke(touch) else { continue }
             lastPencilPoint = touch.location(in: surface)
-            input.begin(at: world(touch), timestamp: touch.timestamp, style: model.style)
-            model.strokeStarted(with: model.style.color)
-            updatePreview()
         }
         for touch in touches where touch.type == .direct {
             model.userInteracted(camera: camera)
             nextFingerID += 1
-            fingerIDs[ObjectIdentifier(touch)] = nextFingerID
-            navigation.begin(id: nextFingerID, point: screen(touch), camera: camera)
-            if pencilID != nil { navigation.blockUntilTouchesEnd() }
-            if navigation.touches.count == 1 && pencilID == nil && !navigation.blocked && !model.reporting { armLongPress(at: screen(touch)) }
-            else { longPress?.cancel() }
+            let id = nextFingerID, point = screen(touch)
+            fingerIDs[ObjectIdentifier(touch)] = id
+            fingerPoints[id] = point
+            if fingersDraw { fingerBegan(touch, id: id, at: point); continue }
+            navigation.begin(id: id, point: point, camera: camera)
+            if drawingID != nil { navigation.blockUntilTouchesEnd() }
+            if navigation.touches.count == 1 && drawingID == nil && !navigation.blocked && !model.reporting {
+                armLongPress(at: point) { [weak self] in
+                    guard let self, drawingID == nil, !navigation.blocked, navigation.touches.count == 1 else { return nil }
+                    return navigation.touches.values.first
+                }
+            } else { longPress?.cancel() }
         }
         updateFrameLoop()
     }
 
+    /// Finger-drawing mode: one finger draws, a quick second finger turns it into navigation (`FingerGesture`).
+    private func fingerBegan(_ touch: UITouch, id: Int, at point: WorldPoint) {
+        let pencilDrawing = drawingID != nil && !drawingWithFinger
+        switch fingerGesture.began(id: id, at: touch.timestamp) {
+        case .draw:
+            if pencilDrawing { fingerGesture.abandonDrawing(); return } // palm next to the Pencil
+            if model.termsAccepted {
+                guard startStroke(touch) else { fingerGesture.abandonDrawing(); return }
+                drawingWithFinger = true
+            } else {
+                termsCandidate = id
+            }
+            armLongPress(at: point) { [weak self] in
+                guard let self, fingerGesture.drawing == id else { return nil }
+                return fingerPoints[id]
+            }
+        case .navigate(let ids):
+            longPress?.cancel()
+            termsCandidate = nil
+            if drawingWithFinger { abandonFingerStroke() } // it was the start of a pinch
+            for each in ids { if let start = fingerPoints[each] { navigation.begin(id: each, point: start, camera: camera) } }
+            if pencilDrawing { navigation.blockUntilTouchesEnd() }
+        case .none:
+            break
+        }
+    }
+
+    /// Starts a stroke for a Pencil or a drawing finger; false when drawing is not possible now.
+    private func startStroke(_ touch: UITouch) -> Bool {
+        // App Review 1.2: the terms are accepted before anything is published.
+        guard model.termsAccepted else { model.termsPrompt = true; return false }
+        guard model.canDraw,
+              !model.isShared || (sharedState?.pendingCount ?? 0) + volatileStrokes.count < 64 else { return false }
+        model.userInteracted(camera: camera)
+        longPress?.cancel()
+        navigation.blockUntilTouchesEnd()
+        drawingID = ObjectIdentifier(touch)
+        input.begin(at: world(touch), timestamp: touch.timestamp, style: model.style)
+        model.strokeStarted(with: model.style.color)
+        updatePreview()
+        return true
+    }
+
+    private func abandonFingerStroke() {
+        input.cancel()
+        drawingID = nil
+        drawingWithFinger = false
+        pendingPreview = nil
+        renderer?.preview = nil
+        requestFrame()
+    }
+
     func moved(_ touches: Set<UITouch>, event: UIEvent?) {
         for touch in touches {
-            if ObjectIdentifier(touch) == pencilID {
+            let finger = fingerIDs[ObjectIdentifier(touch)]
+            if let finger {
+                let point = screen(touch)
+                fingerPoints[finger] = point
+                if let origin = longPressOrigin, origin.distance(to: point) > 10 {
+                    longPress?.cancel()
+                    if termsCandidate == finger { askTerms() } // clearly a stroke: explain why nothing is drawn
+                }
+            }
+            if ObjectIdentifier(touch) == drawingID {
                 for sample in event?.coalescedTouches(for: touch) ?? [touch] {
                     input.appendReal(world(sample), timestamp: sample.timestamp)
                 }
                 input.replacePredictions((event?.predictedTouches(for: touch) ?? []).map(world))
-                lastPencilPoint = touch.location(in: surface)
+                if !drawingWithFinger { lastPencilPoint = touch.location(in: surface) }
                 updatePreview()
-            } else if let id = fingerIDs[ObjectIdentifier(touch)] {
-                let point = screen(touch)
-                if let origin = longPressOrigin, origin.distance(to: point) > 10 { longPress?.cancel() }
-                if pencilID == nil, let next = navigation.move(id: id, point: point, viewport: viewport) {
-                    camera = next
-                    model.userInteracted(camera: camera)
-                    requestFrame()
-                }
+            } else if let finger, drawingID == nil,
+                      let next = navigation.move(id: finger, point: screen(touch), viewport: viewport) {
+                camera = next
+                model.userInteracted(camera: camera)
+                requestFrame()
             }
         }
     }
 
     func ended(_ touches: Set<UITouch>, event: UIEvent?, cancelled: Bool) {
         for touch in touches {
-            if ObjectIdentifier(touch) == pencilID {
+            if ObjectIdentifier(touch) == drawingID {
                 if !cancelled {
                     for sample in event?.coalescedTouches(for: touch) ?? [] {
                         input.appendReal(world(sample), timestamp: sample.timestamp)
@@ -280,11 +349,17 @@ final class CanvasViewController: UIViewController {
                     }
                 }
                 input.cancel()
-                pencilID = nil
+                drawingID = nil
+                drawingWithFinger = false
                 pendingPreview = nil
                 renderer?.preview = nil
             }
-            if let id = fingerIDs.removeValue(forKey: ObjectIdentifier(touch)) { navigation.end(id: id) }
+            if let id = fingerIDs.removeValue(forKey: ObjectIdentifier(touch)) {
+                navigation.end(id: id)
+                fingerGesture.ended(id: id)
+                fingerPoints[id] = nil
+                if termsCandidate == id { if !cancelled { askTerms() }; termsCandidate = nil }
+            }
             if let start = reportTaps.removeValue(forKey: ObjectIdentifier(touch)), !cancelled, model.reporting,
                start.distance(to: screen(touch)) <= 10, let target = reportTarget(at: screen(touch)) {
                 model.toggleReport(target)
@@ -296,14 +371,24 @@ final class CanvasViewController: UIViewController {
         requestFrame()
     }
 
+    private func askTerms() {
+        termsCandidate = nil
+        fingerGesture.abandonDrawing()
+        model.termsPrompt = true
+    }
+
     func cancelGesture() {
         longPress?.cancel()
         input.cancel()
-        pencilID = nil
+        drawingID = nil
+        drawingWithFinger = false
         pendingPreview = nil
         renderer?.preview = nil
         navigation.reset()
+        fingerGesture.reset()
         fingerIDs.removeAll()
+        fingerPoints.removeAll()
+        termsCandidate = nil
         reportTaps.removeAll()
         updateFrameLoop()
         requestFrame()
@@ -576,7 +661,7 @@ final class CanvasViewController: UIViewController {
     private func updateFrameLoop() {
         guard surface != nil else { return }
         let navigating = !navigation.blocked && !navigation.touches.isEmpty
-        let running = renderer?.isRenderingEnabled == true && (pencilID != nil || navigating)
+        let running = renderer?.isRenderingEnabled == true && (drawingID != nil || navigating)
         if renderer?.isRenderingEnabled != true { displayLink?.isPaused = true }
         guard running != frameLoopRunning else { return }
         frameLoopRunning = running
@@ -611,18 +696,17 @@ final class CanvasViewController: UIViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    private func armLongPress(at point: WorldPoint) {
+    /// Opens the palette when `current` (the pressing finger) stays within 10 pt of `point` for 500 ms.
+    private func armLongPress(at point: WorldPoint, current: @escaping () -> WorldPoint?) {
         longPress?.cancel()
         longPressOrigin = point
         let initialCamera = camera
         longPress = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
-            guard let self, !Task.isCancelled, pencilID == nil, !navigation.blocked,
-                  navigation.touches.count == 1,
-                  let current = navigation.touches.values.first, current.distance(to: point) <= 10 else { return }
+            guard let self, !Task.isCancelled, let now = current(), now.distance(to: point) <= 10 else { return }
             camera = initialCamera
             model.userInteracted(camera: camera)
-            showTools(at: CGPoint(x: point.x, y: point.y))
+            showTools(at: CGPoint(x: point.x, y: point.y)) // also abandons a finger stroke (a dot so far)
         }
     }
 
