@@ -5,7 +5,7 @@ import Testing
 
 /// In-process loopback WebSocket peer for URLSession integration; not a backend replacement.
 actor LocalWebSocketServer {
-    enum Mode: Sendable { case binary, jsonFallback, legacy, missingProtocol, wrongVersion, wrongFrame, oversized, flood }
+    enum Mode: Sendable { case binary, jsonFallback, legacy, missingProtocol, wrongVersion, wrongFrame, oversized, flood, silentPong, dropOnPing }
     struct Handshake: Sendable {
         var offers: [String] = []
         var origin: String?
@@ -43,7 +43,7 @@ actor LocalWebSocketServer {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
         let options = NWProtocolWebSocket.Options()
-        options.autoReplyPing = true
+        options.autoReplyPing = mode != .silentPong && mode != .dropOnPing
         options.maximumMessageSize = 4 * 1024 * 1024
         options.setClientRequestHandler(queue) { offers, headers in
             capture.record(offers, headers: headers)
@@ -113,6 +113,7 @@ actor LocalWebSocketServer {
     private func received(_ data: Data?, opcode: NWProtocolWebSocket.Opcode?, error: NWError?, connection: NWConnection) {
         guard error == nil, opcode != .close else { connection.cancel(); return }
         guard let data, let opcode else { receive(connection); return }
+        if opcode == .ping, mode == .dropOnPing { connection.cancel(); return } // network lost while a pong is pending
         if opcode == .ping || opcode == .pong { receive(connection); return }
         do {
             let json = mode == .jsonFallback || mode == .legacy

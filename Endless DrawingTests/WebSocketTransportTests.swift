@@ -133,4 +133,53 @@ struct WebSocketTransportTests {
         await #expect(throws: TransportFailure.notConnected) { try await transport.send(hello) }
         await server.stop()
     }
+
+    @Test func pingReplyResumesOnlyOnceWhenURLSessionCallsBackTwice() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            let reply = PingReply(continuation)
+            #expect(reply.complete(nil))
+            #expect(!reply.complete(URLError(.cancelled)))
+            #expect(!reply.complete(nil))
+        }
+        await #expect(throws: TransportFailure.network) {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                let reply = PingReply(continuation)
+                #expect(reply.complete(URLError(.networkConnectionLost)))
+                #expect(!reply.complete(URLError(.cancelled)))
+            }
+        }
+    }
+
+    @Test func disconnectWhilePongIsPendingFailsThePingWithoutTrapping() async throws {
+        let server = try LocalWebSocketServer(mode: .silentPong)
+        let port = try await server.start()
+        let transport = WebSocketTransport(environment: try environment(port))
+        defer { Task { await transport.disconnect(); await server.stop() } }
+        let connection = try await transport.connect()
+        try await transport.send(.hello(secret()))
+        var messages = connection.messages.makeAsyncIterator()
+        #expect(try await messages.next() == .hello(spawn: nil))
+        let ping = Task { try await transport.ping() }
+        try await Task.sleep(for: .milliseconds(100)) // the ping frame is out; no pong will come
+        await transport.disconnect()
+        await #expect(throws: TransportFailure.notConnected) { try await ping.value }
+        try await Task.sleep(for: .milliseconds(300)) // late URLSession ping callbacks must be harmless
+        await server.stop()
+    }
+
+    @Test func connectionLostWhilePongIsPendingFailsThePingWithoutTrapping() async throws {
+        let server = try LocalWebSocketServer(mode: .dropOnPing)
+        let port = try await server.start()
+        let transport = WebSocketTransport(environment: try environment(port))
+        defer { Task { await transport.disconnect(); await server.stop() } }
+        let connection = try await transport.connect()
+        try await transport.send(.hello(secret()))
+        var messages = connection.messages.makeAsyncIterator()
+        #expect(try await messages.next() == .hello(spawn: nil))
+        await #expect(throws: TransportFailure.network) { try await transport.ping() }
+        await #expect(throws: TransportFailure.network) { try await messages.next() }
+        try await Task.sleep(for: .milliseconds(300))
+        await transport.disconnect()
+        await server.stop()
+    }
 }

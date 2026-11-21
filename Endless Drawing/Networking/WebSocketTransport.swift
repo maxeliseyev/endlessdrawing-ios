@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// One active socket, one receive loop, one bounded serial send path. No scene or retry policy here.
 actor WebSocketTransport {
@@ -179,10 +180,8 @@ actor WebSocketTransport {
                 case .packet(.binary(let bytes)): try await task.send(.data(bytes))
                 case .ping:
                     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                        task.sendPing { error in
-                            if error != nil { continuation.resume(throwing: TransportFailure.network) }
-                            else { continuation.resume() }
-                        }
+                        let reply = PingReply(continuation)
+                        task.sendPing { error in reply.complete(error) }
                     }
                 }
             } catch {
@@ -244,6 +243,26 @@ actor WebSocketTransport {
         pendingActive?.continuation.resume(throwing: failure ?? TransportFailure.notConnected)
         for send in pendingSends { send.continuation.resume(throwing: failure ?? TransportFailure.notConnected) }
         if let failure { stream?.finish(throwing: failure) } else { stream?.finish() }
+    }
+}
+
+/// URLSession may call a `sendPing` handler more than once for the same ping. On iPad (iOS 27.2,
+/// TestFlight 0.6.0 (11)) a second, failing call trapped in `CheckedContinuation.resume(throwing:)`;
+/// the simulator does not reproduce it. Only the first outcome counts; later calls are dropped.
+nonisolated final class PingReply: Sendable {
+    private let continuation: CheckedContinuation<Void, any Error>
+    private let resumed = Mutex(false)
+    init(_ continuation: CheckedContinuation<Void, any Error>) { self.continuation = continuation }
+
+    /// Returns false when an earlier call already resumed the continuation.
+    @discardableResult func complete(_ error: (any Error)?) -> Bool {
+        let first = resumed.withLock { resumed in
+            defer { resumed = true }
+            return !resumed
+        }
+        guard first else { return false }
+        if error != nil { continuation.resume(throwing: TransportFailure.network) } else { continuation.resume() }
+        return true
     }
 }
 
