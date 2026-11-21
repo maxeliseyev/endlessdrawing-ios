@@ -36,11 +36,15 @@ final class CanvasViewController: UIViewController {
     private var previousSize = CGSize.zero
     private var localStrokes: [LocalStroke] = []
     private var gpuStrokes = GeometryCache()
+    /// Resource diagnostics; neither counter is a product limit.
+    var geometryBytes: Int { gpuStrokes.bytes }
+    var pendingGeometryCount: Int { missingGeometry.count }
     /// Shared scene by id, strokes still lacking GPU geometry, and whether their priority must be re-sorted.
     private var strokesByID: [UUID: LocalStroke] = [:]
     private var sequenceByID: [UUID: Int64] = [:]
     private var missingGeometry: Set<UUID> = []
     private var geometryOrderStale = true
+    /// Soft prefetch-cache target, not a limit on the visible canvas or on drawing.
     private static let geometryBudget = 64 * 1024 * 1024
     private var finalTasks: [UUID: Task<Void, Never>] = [:]
     private var previewTask: Task<Void, Never>?
@@ -58,7 +62,6 @@ final class CanvasViewController: UIViewController {
     private var reportTaps: [ObjectIdentifier: WorldPoint] = [:]
     /// Dashed outlines of the strokes selected for a report.
     private let reportLayer = CAShapeLayer()
-    private var renderBudgetBlocked = false
     private var viewportTask: Task<Void, Never>?
     private var viewportToSend: (Camera, CanvasSize)?
     private var lastViewportCamera: Camera?
@@ -152,6 +155,7 @@ final class CanvasViewController: UIViewController {
                                                                object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.renderer?.releaseTargets()
+                self?.trimOffscreenGeometry()
                 self?.requestFrame()
             }
         }
@@ -516,7 +520,6 @@ final class CanvasViewController: UIViewController {
 
     /// Whole subscription scope, not only the viewport: pan must not rebuild the scene or drop geometry.
     private func rebuildSharedScene() {
-        let previous = Set(strokesByID.keys)
         var ids: Set<UUID> = []
         let hidden = sharedState?.hidden ?? []
         var sequences: [UUID: Int64] = [:]
@@ -536,7 +539,6 @@ final class CanvasViewController: UIViewController {
         }
         strokesByID = Dictionary(uniqueKeysWithValues: localStrokes.map { ($0.id, $0) })
         sequenceByID = sequences.filter { ids.contains($0.key) }
-        if ids != previous { renderBudgetBlocked = false; model.graphicsLimited = false }
         gpuStrokes.retain { ids.contains($0) }
         strokeExtents = strokeExtents.filter { ids.contains($0.key) }
         missingGeometry = ids.filter { gpuStrokes[$0] == nil }
@@ -548,7 +550,7 @@ final class CanvasViewController: UIViewController {
 
     /// Batches of strokes, nearest to the viewport first, prepared on all cores; one renderer update per batch.
     private func prepareSharedGeometry() {
-        guard model.isShared, sceneGeometryTask == nil, !renderBudgetBlocked, !missingGeometry.isEmpty else { return }
+        guard model.isShared, sceneGeometryTask == nil, !missingGeometry.isEmpty else { return }
         sceneGeometryTask = Task { [weak self] in
             guard let self else { return }
             let interval = Signposts.geometry.beginInterval("scene")
@@ -575,31 +577,38 @@ final class CanvasViewController: UIViewController {
                     // The scene may have changed while preparing: never resurrect removed or replaced strokes.
                     guard missingGeometry.contains(stroke.id), strokesByID[stroke.id] != nil, let geometry else { continue }
                     guard reserveGeometry(geometry.byteCost, for: stroke.id, retained: isRetained(stroke.id, in: retained)) else {
-                        if renderBudgetBlocked { synchronizeStrokes(); return }
                         deferred = true; break // far stroke without room: wait until the camera comes closer
                     }
                     do { gpuStrokes[stroke.id] = try renderer.upload(geometry); missingGeometry.remove(stroke.id); built += 1 }
                     catch { model.failure = String(localized: "Not enough graphics memory. Try again."); synchronizeStrokes(); return }
                 }
                 synchronizeStrokes()
-                if deferred { return }
+                if deferred {
+                    if geometryOrderStale { continue } // camera moved while preparing: retry visible-first at its new pose
+                    return
+                }
             }
         }
     }
 
-    /// Missing strokes ordered farthest-first by distance from the camera centre to their extent.
+    /// Pop visible strokes before prefetch, then nearest first within each class. A corner of the
+    /// viewport can be farther from its centre than an offscreen edge: distance alone can starve it.
     private func geometryPriority() -> [UUID] {
-        let center = camera.center
+        let center = camera.center, rect = retainedRect()
         func distance(_ id: UUID) -> Double {
             guard let e = strokeExtents[id] else { return .infinity }
             return hypot(max(e.minX - center.x, 0, center.x - e.maxX), max(e.minY - center.y, 0, center.y - e.maxY))
         }
-        return missingGeometry.map { ($0, distance($0)) }.sorted { $0.1 > $1.1 }.map(\.0)
+        return missingGeometry.map { (id: $0, required: isRetained($0, in: rect), distance: distance($0)) }
+            .sorted {
+                if $0.required != $1.required { return !$0.required } // farthest/optional first; popLast takes required
+                return $0.distance > $1.distance
+            }.map(\.id)
     }
 
-    /// Viewport plus a 512 pt margin: geometry here is never evicted (tiles near the screen rebuild from it).
+    /// Only on-screen geometry is required. Prefetch, including the former 512 pt margin, is evictable.
     private func retainedRect() -> (minX: Double, minY: Double, maxX: Double, maxY: Double) {
-        let halfWidth = (viewport.width / 2 + 512) / camera.zoom, halfHeight = (viewport.height / 2 + 512) / camera.zoom
+        let halfWidth = viewport.width / 2 / camera.zoom, halfHeight = viewport.height / 2 / camera.zoom
         return (camera.center.x - halfWidth, camera.center.y - halfHeight, camera.center.x + halfWidth, camera.center.y + halfHeight)
     }
 
@@ -608,28 +617,27 @@ final class CanvasViewController: UIViewController {
         return e.maxX >= rect.minX && e.minX <= rect.maxX && e.maxY >= rect.minY && e.minY <= rect.maxY
     }
 
-    /// Room for `bytes` of geometry within the shared budget. Far geometry is evicted for retained strokes;
-    /// a far stroke never evicts anything. Only a retained set beyond the budget is "too dense".
+    /// Prefetch yields to visible strokes and finalized drafts; a cache target never disables the canvas.
+    /// Actual Metal allocation failures still follow the renderer's allocation-error path.
     private func reserveGeometry(_ bytes: Int, for id: UUID, retained: Bool) -> Bool {
         guard model.isShared else { return true }
-        var excess = gpuStrokes.bytes - (gpuStrokes[id].map(GeometryCache.cost) ?? 0) + bytes - Self.geometryBudget
-        guard excess > 0 else { return true }
-        guard retained else { return false }
         let rect = retainedRect()
-        let victims = gpuStrokes.ids.filter { $0 != id && !isRetained($0, in: rect) }
-        for victim in victims {
-            guard let stroke = gpuStrokes[victim] else { continue }
-            excess -= GeometryCache.cost(stroke)
-            gpuStrokes[victim] = nil
-            if strokesByID[victim] != nil { missingGeometry.insert(victim) }
-            if excess <= 0 { return true }
-        }
-        graphicsBudgetExceeded(); return false
+        guard let evicted = gpuStrokes.reserve(bytes, for: id, budget: Self.geometryBudget, required: retained,
+                                               canEvict: { !self.isRetained($0, in: rect) }) else { return false }
+        for victim in evicted where strokesByID[victim] != nil { missingGeometry.insert(victim) }
+        return true
     }
 
-    private func graphicsBudgetExceeded() {
-        if !renderBudgetBlocked { model.failure = String(localized: "This area is too dense. Zoom in to continue.") }
-        renderBudgetBlocked = true; model.graphicsLimited = true
+    /// Release optional GPU geometry on memory pressure, keeping the canonical scene for a later pan.
+    private func trimOffscreenGeometry() {
+        guard model.isShared else { return }
+        let rect = retainedRect()
+        let victims = gpuStrokes.ids.filter { !isRetained($0, in: rect) }
+        for id in victims {
+            gpuStrokes[id] = nil
+            if strokesByID[id] != nil { missingGeometry.insert(id) }
+        }
+        synchronizeStrokes()
     }
 
     private func drainPersistence() {
@@ -734,7 +742,6 @@ final class CanvasViewController: UIViewController {
         case .retry:
             if renderer == nil { configureRenderer() }
             renderer?.releaseTargets()
-            renderBudgetBlocked = false; model.graphicsLimited = false
             model.retryConnection()
             drainPersistence()
             prepareSharedGeometry()
@@ -792,29 +799,6 @@ private final class CanvasSurface: MTKView {
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) { inputController?.moved(touches, event: event) }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { inputController?.ended(touches, event: event, cancelled: false) }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { inputController?.ended(touches, event: event, cancelled: true) }
-}
-
-/// GPU geometry by stroke id with a running byte total: budget checks never re-sum the whole scene.
-private struct GeometryCache {
-    private(set) var bytes = 0
-    private var entries: [UUID: MetalRenderer.GPUStroke] = [:]
-
-    subscript(id: UUID) -> MetalRenderer.GPUStroke? {
-        get { entries[id] }
-        set {
-            if let old = entries[id] { bytes -= Self.cost(old) }
-            entries[id] = newValue
-            if let newValue { bytes += Self.cost(newValue) }
-        }
-    }
-
-    var ids: [UUID] { Array(entries.keys) }
-
-    mutating func retain(_ keep: (UUID) -> Bool) {
-        for id in ids where !keep(id) { self[id] = nil }
-    }
-
-    static func cost(_ stroke: MetalRenderer.GPUStroke) -> Int { (stroke.triangles?.length ?? 0) + (stroke.circles?.length ?? 0) }
 }
 
 private extension PreparedStroke {
