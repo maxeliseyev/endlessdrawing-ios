@@ -48,7 +48,6 @@ final class CanvasModel {
                                         systemPencilOnly: UIPencilInteraction.prefersPencilOnlyDrawing)
     }
     var canUndo = false
-    var graphicsLimited = false
     private(set) var worldState: WorldRenderState?
     private(set) var storageReady = false
     @ObservationIgnored var command: ((Command) -> Void)?
@@ -152,7 +151,7 @@ final class CanvasModel {
         style.brush = previousBrush // didSet records the current shape as the next "previous"
     }
     var canDraw: Bool {
-        !isShared || (storageReady && !graphicsLimited && worldState?.status != .blocked && worldState?.status != .dense
+        !isShared || (storageReady && worldState?.status != .blocked && worldState?.status != .dense
                       && worldState?.issue != .storage && worldState?.issue != .banned && (worldState?.pendingCount ?? 0) < 64)
     }
     var statusText: String {
@@ -161,7 +160,6 @@ final class CanvasModel {
             return openingFailed ? String(localized: "Local storage is unavailable. Retry to open it.")
                 : String(localized: "Opening local drawing storage…")
         }
-        if graphicsLimited { return String(localized: "This area is too dense. Zoom in to continue.") }
         if worldState?.issue == .banned {
             return String(localized: "Drawing is no longer available for this device because of a moderation decision.")
         }
