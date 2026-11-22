@@ -191,12 +191,32 @@
         }
       }
     },
+    "Eraser" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ластик"
+          }
+        }
+      }
+    },
     "Everything here is public and stays visible to everyone." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Всё здесь публично и остаётся видно всем."
+          }
+        }
+      }
+    },
+    "Hand" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рука"
           }
         }
       }
@@ -629,6 +649,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Этот штрих превышает допустимые размеры."
+          }
+        }
+      }
+    },
+    "Tool" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструмент"
           }
         }
       }

@@ -163,6 +163,16 @@ actor WorldSession {
         } catch { issue = .storage; _ = publish(); throw error }
     }
 
+    /// Erases one own stroke: cancels an unconfirmed create or queues an idempotent delete. The stroke is
+    /// hidden optimistically; a server rejection restores it (the journal keeps its undo entry).
+    func delete(strokeID: UUID) async throws -> WorldRenderState {
+        do {
+            try await journal.requestDelete(strokeID: strokeID)
+            await refreshJournal()
+            return publish()
+        } catch { issue = .storage; _ = publish(); throw error }
+    }
+
     private func refreshJournal() async {
         let snapshot = await journal.versionedSnapshot()
         if snapshot.revision >= journalRevision { journalRevision = snapshot.revision; journalState = snapshot.state }

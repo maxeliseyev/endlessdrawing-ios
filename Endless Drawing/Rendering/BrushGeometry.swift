@@ -2,7 +2,7 @@ import Foundation
 
 /// Port of the pinned web tessellator/effect geometry. All calculations precede Float conversion.
 nonisolated enum BrushGeometry {
-    private typealias Point = SIMD2<Double>
+    typealias Point = SIMD2<Double>
 
     static func prepare(_ stroke: LocalStroke, realPointCount: Int? = nil) -> PreparedStroke? {
         if stroke.style.brush == .round { return RoundGeometry.prepare(stroke, realPointCount: realPointCount) }
@@ -51,9 +51,7 @@ nonisolated enum BrushGeometry {
                 quad(last.l1, last.l1 + end, last.r1 + end, last.r1)
             } else { quad(Point(-half, -half), Point(half, -half), Point(half, half), Point(-half, half)) }
         case .chisel:
-            let thickness = max(1, width / 6) / 2
-            let tip = [Point(-half, -thickness), Point(half, -thickness), Point(half, thickness), Point(-half, thickness)]
-                .map { Point(($0.x + $0.y) / sqrt(2), (-$0.x + $0.y) / sqrt(2)) }
+            let tip = Self.chiselTip(width: width)
             func fan(_ polygon: [Point]) {
                 guard polygon.count >= 3 else { return }
                 for index in 1..<(polygon.count - 1) { triangle(polygon[0], polygon[index], polygon[index + 1]) }
@@ -101,7 +99,15 @@ nonisolated enum BrushGeometry {
                               realTriangleCount: triangles.count, realCircleCount: circles.count)
     }
 
-    private static func hull(_ points: [Point]) -> [Point] {
+    /// Fixed −45° nib (`/` in screen coordinates). Width is the nib's long dimension.
+    static func chiselTip(width: Double) -> [Point] {
+        let half = width / 2
+        let thickness = max(1, width / 6) / 2
+        return [Point(-half, -thickness), Point(half, -thickness), Point(half, thickness), Point(-half, thickness)]
+            .map { Point(($0.x + $0.y) / sqrt(2), (-$0.x + $0.y) / sqrt(2)) }
+    }
+
+    static func hull(_ points: [Point]) -> [Point] {
         let sorted = points.sorted { $0.x < $1.x || ($0.x == $1.x && $0.y < $1.y) }
         func half(_ values: [Point]) -> [Point] {
             var result: [Point] = []

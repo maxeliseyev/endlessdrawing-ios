@@ -7,8 +7,8 @@ import UIKit
 struct PencilInputTests {
     @Test func preferredActionsMapToAppCommands() {
         #expect(PencilCommand.resolve(.switchPrevious) == .switchPrevious)
-        // switchEraser opens the palette until an eraser tool exists (device default for squeeze).
-        for action in [UIPencilPreferredAction.showColorPalette, .showInkAttributes, .showContextualPalette, .switchEraser] {
+        #expect(PencilCommand.resolve(.switchEraser) == .switchEraser)
+        for action in [UIPencilPreferredAction.showColorPalette, .showInkAttributes, .showContextualPalette] {
             #expect(PencilCommand.resolve(action) == .togglePalette)
         }
         // The system runs shortcuts itself; ignore means ignore.
@@ -22,7 +22,16 @@ struct PencilInputTests {
             #expect(PencilCommand.squeeze(.showContextualPalette, phase: phase) == .none)
         }
         #expect(PencilCommand.squeeze(.showContextualPalette, phase: .ended) == .togglePalette)
-        #expect(PencilCommand.squeeze(.switchEraser, phase: .ended) == .togglePalette) // logged on iPad: squeeze=1
+        #expect(PencilCommand.squeeze(.switchEraser, phase: .ended) == .switchEraser)
+    }
+
+    @Test func switchEraserTogglesTool() {
+        let model = CanvasModel()
+        #expect(model.tool == .brush)
+        model.switchEraser()
+        #expect(model.tool == .eraser)
+        model.switchEraser()
+        #expect(model.tool == .brush)
     }
 
     @Test func switchPreviousSwapsBrushShapesBackAndForth() {
