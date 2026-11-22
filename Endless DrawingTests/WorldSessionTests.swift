@@ -3,7 +3,7 @@ import Testing
 @testable import Endless_Drawing
 
 actor WorldPeer: CanvasTransport {
-    enum Mode: Sendable { case normal, loseFirstAck, delayFirstAck, rateLimitOnce, silentHello, silentSnapshot, fallbackFirstCached }
+    enum Mode: Sendable { case normal, loseFirstAck, delayFirstAck, rateLimitOnce, silentHello, silentSnapshot, fallbackFirstCached, loseFirstDeleteAck }
     struct CreateAttempt: Sendable { let requestID: String; let payload: StrokePayload }
     struct Subscription: Sendable { let id: String; let bounds: WireBounds; let visible: WireBounds?; let cached: Bool }
     private let mode: Mode
@@ -25,9 +25,13 @@ actor WorldPeer: CanvasTransport {
     private var reportLog: [ReportAttempt] = []
     /// nil: acknowledge reports; otherwise answer them with this error code.
     private var reportError: String?
+    /// nil: handle deletes normally; otherwise answer them with this error code.
+    private var deleteError: String?
+    private var deleteAckLost = false
     private var bannedCreates = false
     func reports() -> [ReportAttempt] { reportLog }
     func failReports(_ code: String?) { reportError = code }
+    func failDeletes(_ code: String?) { deleteError = code }
     func banCreates() { bannedCreates = true }
 
     init(mode: Mode = .normal, profile: TransportProfile = .messagePackV2) { self.mode = mode; self.profile = profile }
@@ -124,10 +128,16 @@ actor WorldPeer: CanvasTransport {
             if mode == .delayFirstAck && attempts.count == 1 { delayed = acknowledgement; return }
             output?.yield(acknowledgement)
         case .delete(let requestID, let strokeID):
+            if let deleteError {
+                output?.yield(.error(requestID: requestID, subscriptionID: nil, code: deleteError)); return
+            }
             guard let record = records.removeValue(forKey: strokeID) else {
                 output?.yield(.error(requestID: requestID, subscriptionID: nil, code: "not_found")); return
             }
             deleted.insert(strokeID)
+            if mode == .loseFirstDeleteAck && !deleteAckLost {
+                deleteAckLost = true; return // applied server-side, ack lost: the client must retry
+            }
             output?.yield(.deleteAcknowledged(requestID: requestID, strokeID: strokeID, sequence: record.sequence, alreadyDeleted: false))
             if let scope { output?.yield(.deleted(id: scope, strokeID: strokeID, sequence: record.sequence)) }
         }
@@ -229,6 +239,77 @@ struct WorldSessionTests {
         await h.peer.allow(true)
         try await wait { await h.world.snapshot().status == .live }
         #expect(await h.peer.count() == 0)
+    }
+
+    @Test func deleteCancelsUnsentCreateWithoutAnyMutation() async throws {
+        let h = try await make(); defer { Task { await cleanup(h) } }
+        await h.peer.allow(false); await h.world.start()
+        let payload = try M2TestSupport.payload()
+        _ = try await h.world.enqueue(payload.drawable)
+        #expect(await h.journal.snapshot().operations.first?.mayHaveBeenSent == false)
+        _ = try await h.world.delete(strokeID: payload.id)
+        #expect(await h.journal.snapshot().operations.isEmpty)
+        #expect(await h.world.snapshot().pending.isEmpty)
+        await h.peer.allow(true)
+        try await wait { await h.world.snapshot().status == .live }
+        #expect(await h.peer.count() == 0)
+    }
+
+    @Test func deleteRemovesOwnConfirmedStrokeAndItsUndoEntry() async throws {
+        let h = try await make(); defer { Task { await cleanup(h) } }
+        await h.world.start(); try await wait { await h.world.snapshot().status == .live }
+        let payload = try M2TestSupport.payload()
+        _ = try await h.world.enqueue(payload.drawable)
+        try await wait { await h.journal.snapshot().undo.count == 1 }
+        _ = try await h.world.delete(strokeID: payload.id)
+        try await wait {
+            let empty = await h.journal.snapshot().operations.isEmpty
+            let count = await h.peer.count()
+            return empty && count == 0
+        }
+        #expect(await h.world.snapshot().confirmed.isEmpty)
+        #expect(await h.journal.snapshot().undo.isEmpty)
+    }
+
+    @Test func deleteSurvivesLostAckAndCompletesOnRetry() async throws {
+        let h = try await make(.loseFirstDeleteAck, timing: WorldTiming(acknowledgement: 0.2))
+        defer { Task { await cleanup(h) } }
+        await h.world.start(); try await wait { await h.world.snapshot().status == .live }
+        let payload = try M2TestSupport.payload()
+        _ = try await h.world.enqueue(payload.drawable)
+        try await wait { await h.journal.snapshot().undo.count == 1 }
+        _ = try await h.world.delete(strokeID: payload.id)
+        try await wait { await h.journal.snapshot().operations.isEmpty }
+        #expect(await h.peer.count() == 0)
+        #expect(await h.journal.snapshot().undo.isEmpty)
+    }
+
+    @Test func deleteRejectedRestoresTheStrokeAndItsUndoEntry() async throws {
+        let h = try await make(); defer { Task { await cleanup(h) } }
+        await h.peer.failDeletes("forbidden")
+        await h.world.start(); try await wait { await h.world.snapshot().status == .live }
+        let payload = try M2TestSupport.payload()
+        _ = try await h.world.enqueue(payload.drawable)
+        try await wait { await h.journal.snapshot().undo.count == 1 }
+        _ = try await h.world.delete(strokeID: payload.id)
+        try await wait { await h.journal.snapshot().operations.isEmpty }
+        let state = await h.world.snapshot()
+        #expect(state.confirmed.map(\.server.payload.id) == [payload.id])
+        #expect(state.hidden.isEmpty)
+        #expect(await h.journal.snapshot().undo.map(\.strokeID) == [payload.id])
+    }
+
+    @Test func deleteNotFoundIsSuccessAndDropsTheUndoEntry() async throws {
+        let h = try await make(); defer { Task { await cleanup(h) } }
+        await h.peer.failDeletes("not_found")
+        await h.world.start(); try await wait { await h.world.snapshot().status == .live }
+        let payload = try M2TestSupport.payload()
+        _ = try await h.world.enqueue(payload.drawable)
+        try await wait { await h.journal.snapshot().undo.count == 1 }
+        _ = try await h.world.delete(strokeID: payload.id)
+        try await wait { await h.journal.snapshot().operations.isEmpty }
+        #expect(await h.world.snapshot().confirmed.isEmpty)
+        #expect(await h.journal.snapshot().undo.isEmpty)
     }
 
     @Test func rateLimitRetainsOperationUntilDelayedRetry() async throws {
