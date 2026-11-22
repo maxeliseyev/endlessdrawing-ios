@@ -487,6 +487,8 @@ final class CanvasViewController: UIViewController {
 
     private func requestFrame() {
         renderer?.camera = camera
+        let coordinates = coordinateText(x: camera.center.x, y: camera.center.y)
+        if model.centerCoordinates != coordinates { model.centerCoordinates = coordinates }
         frameRequested = true
         resumeDisplayLink()
         guard model.isShared, viewport.isValid,

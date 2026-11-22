@@ -49,6 +49,8 @@ final class CanvasModel {
     }
     var canUndo = false
     var graphicsLimited = false
+    /// Rounded world centre shown bottom-left (web parity M6.1); updated only when the rounded value changes.
+    var centerCoordinates = "x: 0  y: 0"
     private(set) var worldState: WorldRenderState?
     private(set) var storageReady = false
     @ObservationIgnored var command: ((Command) -> Void)?

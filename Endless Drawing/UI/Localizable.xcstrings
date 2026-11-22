@@ -71,6 +71,16 @@
         }
       }
     },
+    "Canvas center coordinates" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Координаты центра холста"
+          }
+        }
+      }
+    },
     "Canvas unavailable" : {
       "localizations" : {
         "ru" : {
