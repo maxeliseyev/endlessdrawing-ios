@@ -39,6 +39,18 @@ struct ContentView: View {
         .overlay(alignment: .top) {
             if model.reporting { ReportBar(model: model).padding(.top, 12) }
         }
+        .overlay(alignment: .bottomLeading) {
+            Text(model.centerCoordinates)
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .foregroundStyle(Color(red: 118.0 / 255.0, green: 118.0 / 255.0, blue: 118.0 / 255.0))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .accessibilityLabel(Text("Canvas center coordinates"))
+                .accessibilityAddTraits(.isStaticText)
+                .allowsHitTesting(false)
+                .padding(.leading, 12)
+                .padding(.bottom, 12)
+        }
         .overlay(alignment: .bottom) {
             if let notice = model.notice {
                 NoticeToast(text: notice).padding(.bottom, 24)
