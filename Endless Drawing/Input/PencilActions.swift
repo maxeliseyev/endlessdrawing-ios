@@ -8,14 +8,14 @@ nonisolated enum PencilCommand: Equatable, Sendable {
     case switchPrevious
     /// Open the contextual palette at the pencil, or close it when already open.
     case togglePalette
+    /// Toggle the brush and the eraser (M6.2).
+    case switchEraser
 
     static func resolve(_ action: UIPencilPreferredAction) -> PencilCommand {
         switch action {
         case .switchPrevious: .switchPrevious
         case .showColorPalette, .showInkAttributes, .showContextualPalette: .togglePalette
-        // No eraser tool yet. "Switch to eraser" is the system default for squeeze, and doing nothing made
-        // squeeze look broken on device: open the brush palette instead until an eraser exists.
-        case .switchEraser: .togglePalette
+        case .switchEraser: .switchEraser
         // The system runs the user's shortcut itself; never duplicate it.
         case .ignore, .runSystemShortcut: .none
         @unknown default: .none // future actions are a safe no-op

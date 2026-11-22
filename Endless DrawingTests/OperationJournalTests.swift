@@ -125,6 +125,18 @@ struct OperationJournalTests {
         #expect(try await journal.acknowledgeDelete(operationID: operation.id, strokeID: id))
     }
 
+    @Test func queuedDeleteSurvivesRestartAndReplays() async throws {
+        let url = file(); defer { remove(url) }
+        let environment = try M2TestSupport.environment(), owner = UUID()
+        let journal = try await OperationJournal.open(environment: environment, identityID: owner, storage: JournalFileStorage(url: url))
+        let strokeID = UUID()
+        try await journal.requestDelete(strokeID: strokeID)
+        let restored = try await OperationJournal.open(environment: environment, identityID: owner, storage: JournalFileStorage(url: url))
+        let snapshot = await restored.snapshot()
+        #expect(snapshot.operations.map(\.payload) == [.delete(strokeID)])
+        #expect(snapshot.operations.first?.mayHaveBeenSent == false)
+    }
+
     @Test func pendingCreateLimitRejectsNewWorkWithoutEvictingOldWork() async throws {
         let url = file(); defer { remove(url) }
         let journal = try await OperationJournal.open(environment: M2TestSupport.environment(), identityID: UUID(), storage: JournalFileStorage(url: url))
