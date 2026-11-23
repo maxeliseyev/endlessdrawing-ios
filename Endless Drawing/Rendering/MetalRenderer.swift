@@ -1,6 +1,14 @@
 import MetalKit
 import os
 
+/// Metal objects for one finished offscreen export render. Metal objects are thread-safe; the caller
+/// waits for the command and reads the shared-storage texture off the main actor.
+nonisolated struct MetalExportOutput: @unchecked Sendable {
+    let texture: MTLTexture
+    let command: MTLCommandBuffer
+    let size: ExportSize
+}
+
 /// Confirmed strokes are rasterised once into world-aligned tiles (port of the web tile cache); a frame
 /// copies visible tiles and draws only the overlay (pending drafts) and the active preview on top.
 @MainActor
@@ -739,7 +747,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     /// composites them into a shared-storage target, and commits. The caller waits for the command and
     /// reads the (premultiplied) pixels on a background thread.
     func renderExport(strokes: [GPUStroke], frame: ExportFrame, requestedScale: Int,
-                      background: ExportBackground) throws -> (texture: MTLTexture, command: MTLCommandBuffer, size: ExportSize) {
+                      background: ExportBackground) throws -> MetalExportOutput {
         let size = Export.exportSize(frame: frame, requested: requestedScale)
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: size.width,
                                                                   height: size.height, mipmapped: false)
@@ -767,7 +775,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         }
         try compositeExport(rendered, into: target, background: background, command: command)
         command.commit()
-        return (target, command, size)
+        return MetalExportOutput(texture: target, command: command, size: size)
     }
 
     /// Copies rendered export tiles into the target with the plain tile pipeline: no blending and no MSAA,

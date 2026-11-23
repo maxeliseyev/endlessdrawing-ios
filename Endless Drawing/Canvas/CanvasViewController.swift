@@ -58,8 +58,12 @@ final class CanvasViewController: UIViewController {
     private var recordsByID: [UUID: SceneStroke] = [:]
     /// Report mode: where each touch started, to tell a tap (select) from a pan.
     private var reportTaps: [ObjectIdentifier: WorldPoint] = [:]
+    /// Export mode: where each touch started, to tell a tap (select author) from a pan.
+    private var exportTaps: [ObjectIdentifier: WorldPoint] = [:]
     /// Dashed outlines of the strokes selected for a report.
     private let reportLayer = CAShapeLayer()
+    /// The export frame (solid rectangle) shown while picking what to save.
+    private let exportLayer = CAShapeLayer()
     private var renderBudgetBlocked = false
     private var viewportTask: Task<Void, Never>?
     private var viewportToSend: (Camera, CanvasSize)?
@@ -114,11 +118,20 @@ final class CanvasViewController: UIViewController {
         model.onCamera = { [weak self] next in self?.camera = next; self?.requestFrame() }
         model.onHiddenChanged = { [weak self] in self?.rebuildSharedScene() }
         model.onReportChanged = { [weak self] in self?.updateReportOverlay() }
+        model.onExportChanged = { [weak self] in self?.updateExportOverlay() }
+        model.exportRenderer = { [weak self] selection, frame, scale, background in
+            guard let self else { throw DrawingDataError.invalidTransition }
+            return try await self.exportData(selection: selection, frame: frame, scale: scale, background: background)
+        }
         reportLayer.fillColor = nil
         reportLayer.strokeColor = UIColor.systemBlue.cgColor
         reportLayer.lineWidth = 2
         reportLayer.lineDashPattern = [6, 4]
         surface.layer.addSublayer(reportLayer)
+        exportLayer.fillColor = UIColor.systemBlue.withAlphaComponent(0.06).cgColor
+        exportLayer.strokeColor = UIColor.systemBlue.cgColor
+        exportLayer.lineWidth = 2
+        surface.layer.addSublayer(exportLayer)
         let secondaryClick = UITapGestureRecognizer(target: self, action: #selector(secondaryClick(_:)))
         secondaryClick.buttonMaskRequired = .secondary
         // Mouse/trackpad only: otherwise a quick Pencil tap was recognized here, opened the palette and
@@ -228,9 +241,15 @@ final class CanvasViewController: UIViewController {
             // Taps (finger or Pencil) pick strokes; fingers still pan and zoom. Nothing is drawn.
             for touch in touches where touch.type == .pencil || touch.type == .direct { reportTaps[ObjectIdentifier(touch)] = screen(touch) }
         }
-        if fingerIDs.isEmpty { fingersDraw = model.fingersDraw && !model.reporting }
+        if model.exporting {
+            // Taps toggle authors; fingers and Pencil still pan and zoom. Nothing is drawn.
+            for touch in touches where touch.type == .pencil || touch.type == .direct || touch.type == .indirectPointer {
+                exportTaps[ObjectIdentifier(touch)] = screen(touch)
+            }
+        }
+        if fingerIDs.isEmpty { fingersDraw = model.fingersDraw && !model.reporting && !model.exporting }
         // Handle Pencil first even when UIKit batches direct and Pencil touches together.
-        for touch in touches where touch.type == .pencil && !model.reporting {
+        for touch in touches where touch.type == .pencil && !model.reporting && !model.exporting {
             model.pencilUsed()
             if drawingWithFinger { abandonFingerStroke() } // the Pencil wins over a finger stroke
             fingerGesture.abandonDrawing()
@@ -246,7 +265,7 @@ final class CanvasViewController: UIViewController {
         for touch in touches where touch.type == .direct {
             model.userInteracted(camera: camera)
             let point = screen(touch)
-            if model.reporting {
+            if model.reporting || model.exporting {
                 beginNavigation(touch, id: trackNavigation(touch, at: point))
             } else if model.tool == .eraser && fingersDraw {
                 // A finger erases on movement or tap, so a long press can still open tools.
@@ -267,6 +286,10 @@ final class CanvasViewController: UIViewController {
         for touch in touches where touch.type == .indirectPointer && !model.reporting {
             guard event?.buttonMask.contains(.secondary) != true else { continue } // secondary click opens the palette
             model.userInteracted(camera: camera)
+            if model.exporting {
+                beginNavigation(touch, id: trackNavigation(touch, at: screen(touch)))
+                continue
+            }
             guard drawingID == nil else { continue }
             switch model.tool {
             case .eraser: beginErase(touch, immediate: true)
@@ -451,6 +474,12 @@ final class CanvasViewController: UIViewController {
                 model.toggleReport(target)
                 requestFrame()
             }
+            if let start = exportTaps.removeValue(forKey: ObjectIdentifier(touch)), !cancelled, model.exporting,
+               start.distance(to: screen(touch)) <= 10, let target = exportTarget(at: screen(touch)) {
+                model.toggleExport(target)
+                updateExportOverlay()
+                requestFrame()
+            }
         }
         longPress?.cancel()
         updateFrameLoop()
@@ -477,6 +506,7 @@ final class CanvasViewController: UIViewController {
         eraseTouches.removeAll()
         termsCandidate = nil
         reportTaps.removeAll()
+        exportTaps.removeAll()
         updateFrameLoop()
         requestFrame()
     }
@@ -868,6 +898,59 @@ final class CanvasViewController: UIViewController {
         reportLayer.path = path
     }
 
+    // MARK: - Export (M6.3)
+
+    /// The topmost stroke under an export tap (own or another author), generous like report selection.
+    private func exportTarget(at point: WorldPoint) -> ExportTarget? {
+        let world = camera.worldPoint(at: point, viewport: viewport)
+        let hit = StrokeHitTest.topmost(at: world, slop: 12 / camera.zoom, in: recordsByID.values) { _ in false }
+        return hit.map { ExportTarget(own: $0.server.own, author: $0.server.author) }
+    }
+
+    private func exportStrokes(_ selection: ExportSelection) -> [LocalStroke] {
+        let hidden = sharedState?.hidden ?? []
+        if model.isShared, let state = sharedState {
+            return Export.selectStrokes(confirmed: state.confirmed, pending: state.pending, selection: selection) { record in
+                hidden.contains(record.server.payload.id) || model.hiddenContent.hides(record.server.payload.id, author: record.server.author)
+            }
+        }
+        return localStrokes
+    }
+
+    private func resolvedExportFrame() -> ExportFrame? {
+        model.exportFrame ?? Export.frameFor(exportStrokes(model.exportSelection))
+    }
+
+    /// Offscreen render + PNG encoding; geometry uses the same tessellator, upload and ink as the screen.
+    func exportData(selection: ExportSelection, frame: ExportFrame?, scale: ExportScale,
+                    background: ExportBackground) async throws -> ExportRenderResult {
+        let selected = exportStrokes(selection)
+        let resolvedFrame = frame ?? Export.frameFor(selected) ?? ExportFrame(minX: -8, minY: -8, maxX: 8, maxY: 8)
+        guard let renderer else { throw MetalRenderer.Failure.unavailable }
+        var uploaded: [MetalRenderer.GPUStroke] = []
+        for stroke in selected {
+            guard let prepared = await worker.prepare(stroke) else { continue }
+            uploaded.append(try renderer.upload(prepared))
+        }
+        let result = try renderer.renderExport(strokes: uploaded, frame: resolvedFrame,
+                                               requestedScale: scale.rawValue, background: background)
+        let png = try await Task.detached(priority: .userInitiated) {
+            try ExportPNG.encode(texture: result.texture, command: result.command, background: background)
+        }.value
+        return ExportRenderResult(png: png, size: result.size, frame: resolvedFrame)
+    }
+
+    /// Draws the export frame rectangle (manual or automatic) over the canvas.
+    private func updateExportOverlay() {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        exportLayer.frame = surface.bounds
+        guard model.exporting, let frame = resolvedExportFrame() else { exportLayer.path = nil; return }
+        let a = camera.screenPoint(at: WorldPoint(x: frame.minX, y: frame.minY), viewport: viewport)
+        let b = camera.screenPoint(at: WorldPoint(x: frame.maxX, y: frame.maxY), viewport: viewport)
+        exportLayer.path = CGPath(rect: CGRect(x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y), transform: nil)
+    }
+
     @objc private func accessibleTools() -> Bool { showTools(); return true }
     @objc private func keyboardTools() { showTools() }
     @objc private func keyboardUndo() { perform(.undo) }
@@ -926,6 +1009,7 @@ extension CanvasViewController: @preconcurrency CAMetalDisplayLinkDelegate {
         frameRequested = false
         renderer.camera = camera
         if !model.reportSelection.isEmpty || reportLayer.path != nil { updateReportOverlay() }
+        if model.exporting || exportLayer.path != nil { updateExportOverlay() }
         let rendered = renderer.draw(update, viewport: CanvasSize(width: surface.bounds.width, height: surface.bounds.height))
         if !rendered { frameRequested = true }
         scheduleAfterFrame(rendered: rendered)

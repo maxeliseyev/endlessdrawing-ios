@@ -122,6 +122,16 @@ struct ExportTests {
         #expect(square.width == 4096)
     }
 
+    @Test func summarizesTheSelectionInEnglishAndRussianPlurals() {
+        #expect(Export.summary(own: true, authorCount: 0, russian: false) == "My drawings")
+        #expect(Export.summary(own: true, authorCount: 1, russian: false) == "My drawings + 1 author")
+        #expect(Export.summary(own: false, authorCount: 2, russian: false) == "2 authors")
+        #expect(Export.summary(own: false, authorCount: 0, russian: false) == "Nothing selected")
+        let russian = [1, 2, 5, 11, 21, 22, 112].map { Export.summary(own: false, authorCount: $0, russian: true) }
+        #expect(russian == ["1 автор", "2 автора", "5 авторов", "11 авторов", "21 автор", "22 автора", "112 авторов"])
+        #expect(Export.summary(own: true, authorCount: 3, russian: true) == "Мои рисунки + 3 автора")
+    }
+
     @Test func namesTheFileByTheRoundedFrameCentreWithoutNegativeZero() {
         #expect(Export.exportFileName(frame: ExportFrame(minX: -10.4, minY: -0.8, maxX: 10, maxY: 0))
             == "endless-drawing_0_0.png")

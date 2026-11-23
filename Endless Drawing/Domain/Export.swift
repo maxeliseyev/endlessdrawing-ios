@@ -7,6 +7,19 @@ nonisolated struct ExportSelection: Equatable, Sendable {
     static let defaultSelection = ExportSelection(own: true, authors: [])
 }
 
+/// The stroke under an export tap: enough to toggle the selection (own or another author).
+nonisolated struct ExportTarget: Equatable, Sendable {
+    let own: Bool
+    let author: String?
+}
+
+/// Result of an offscreen export render: the PNG and the exact frame/size it was rendered with.
+nonisolated struct ExportRenderResult: Sendable {
+    let png: Data
+    let size: ExportSize
+    let frame: ExportFrame
+}
+
 nonisolated enum ExportBackground: String, CaseIterable, Sendable {
     case transparent, white
 }
@@ -117,6 +130,24 @@ nonisolated enum Export {
             let e = StrokeExtent(stroke)
             return e.minX <= frame.maxX && e.maxX >= frame.minX && e.minY <= frame.maxY && e.maxY >= frame.minY
         }
+    }
+
+    /// Selection summary with EN/RU pluralization, mirroring the web client's `exportSummary`.
+    static func summary(own: Bool, authorCount: Int, russian: Bool = Locale.current.language.languageCode?.identifier == "ru") -> String {
+        if own && authorCount == 0 { return russian ? "Мои рисунки" : "My drawings" }
+        if own { return russian ? "Мои рисунки + \(authorCount) \(authorNoun(authorCount, russian: russian))"
+                                 : "My drawings + \(authorCount) \(authorNoun(authorCount, russian: false))" }
+        if authorCount == 0 { return russian ? "Ничего не выбрано" : "Nothing selected" }
+        return russian ? "\(authorCount) \(authorNoun(authorCount, russian: true))"
+                       : "\(authorCount) \(authorNoun(authorCount, russian: false))"
+    }
+
+    static func authorNoun(_ count: Int, russian: Bool) -> String {
+        guard russian else { return count == 1 ? "author" : "authors" }
+        let mod10 = count % 10, mod100 = count % 100
+        if mod10 == 1 && mod100 != 11 { return "автор" }
+        if (2...4).contains(mod10) && !(12...14).contains(mod100) { return "автора" }
+        return "авторов"
     }
 
     /// `endless-drawing_<x>_<y>.png` from the frame centre in whole world units, ASCII minus, no −0.
