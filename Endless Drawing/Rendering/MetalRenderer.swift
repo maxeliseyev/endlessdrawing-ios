@@ -590,7 +590,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     /// One render pass for a whole target: white MSAA color resolved into `target`, transient coverage.
-    private func beginInkPass(resolvingInto target: MTLTexture, command: MTLCommandBuffer) throws -> MTLRenderCommandEncoder {
+    private func beginInkPass(resolvingInto target: MTLTexture, clearColor: MTLClearColor = MTLClearColorMake(1, 1, 1, 1),
+                              command: MTLCommandBuffer) throws -> MTLRenderCommandEncoder {
         let size = SIMD2(target.width, target.height)
         if inkTargets[size] == nil {
             func transient(_ format: MTLPixelFormat) throws -> MTLTexture {
@@ -610,7 +611,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         guard let attachments = inkTargets[size] else { throw Failure.allocation }
         let pass = MTLRenderPassDescriptor()
         let color = pass.colorAttachments[0]!
-        color.clearColor = MTLClearColorMake(1, 1, 1, 1)
+        color.clearColor = clearColor
         color.loadAction = .clear
         if let multisample = attachments.color {
             color.texture = multisample
@@ -715,6 +716,83 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         ink.setFragmentBytes(&color, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
         ink.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         ink.endEncoding()
+    }
+
+    // MARK: - Export rendering
+
+    /// Renders strokes for an explicit world→pixel view into a texture (white or transparent base).
+    /// The same mesh/circle geometry, ink union coverage and opacity composite as the on-screen path.
+    func render(_ strokes: [GPUStroke], into target: MTLTexture, view: TilePlan.View,
+                background: ExportBackground, command: MTLCommandBuffer) throws {
+        let clearColor: MTLClearColor = background == .white ? MTLClearColorMake(1, 1, 1, 1) : MTLClearColorMake(0, 0, 0, 0)
+        if ink != nil {
+            let encoder = try beginInkPass(resolvingInto: target, clearColor: clearColor, command: command)
+            for stroke in strokes { encodeInk(stroke, encoder: encoder, target: target, view: view) }
+            encoder.endEncoding()
+        } else {
+            try clear(target, color: clearColor, command: command)
+            for stroke in strokes { try draw(stroke, to: target, view: view, command: command) }
+        }
+    }
+
+    /// Offscreen export: renders `strokes` inside `frame` at the exact requested scale in 512² tiles,
+    /// composites them into a shared-storage target, and commits. The caller waits for the command and
+    /// reads the (premultiplied) pixels on a background thread.
+    func renderExport(strokes: [GPUStroke], frame: ExportFrame, requestedScale: Int,
+                      background: ExportBackground) throws -> (texture: MTLTexture, command: MTLCommandBuffer, size: ExportSize) {
+        let size = Export.exportSize(frame: frame, requested: requestedScale)
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: size.width,
+                                                                  height: size.height, mipmapped: false)
+        descriptor.usage = [.renderTarget, .shaderRead]
+        descriptor.storageMode = .shared
+        guard let target = device.makeTexture(descriptor: descriptor), let command = queue.makeCommandBuffer() else {
+            throw Failure.allocation
+        }
+        let visible = TilePlan.Rect(minX: frame.minX, minY: frame.minY, maxX: frame.maxX, maxY: frame.maxY)
+        let fullView = TilePlan.View(origin: WorldPoint(x: frame.minX, y: frame.minY), scale: size.scale,
+                                     width: size.width, height: size.height)
+        var rendered: [(texture: MTLTexture, placement: TilePlan.Placement)] = []
+        for key in TilePlan.covering(visible, scale: size.scale, margin: 0) {
+            let bounds = TilePlan.bounds(key)
+            let tileStrokes = strokes.filter { $0.extent.maxX >= bounds.minX && $0.extent.minX <= bounds.maxX
+                                               && $0.extent.maxY >= bounds.minY && $0.extent.minY <= bounds.maxY }
+            guard !tileStrokes.isEmpty else { continue }
+            let tileDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: TilePlan.size,
+                                                                          height: TilePlan.size, mipmapped: false)
+            tileDescriptor.usage = [.renderTarget, .shaderRead]
+            tileDescriptor.storageMode = .private
+            guard let tile = device.makeTexture(descriptor: tileDescriptor) else { throw Failure.allocation }
+            try render(tileStrokes, into: tile, view: TilePlan.view(key), background: background, command: command)
+            rendered.append((tile, TilePlan.placement(key, in: fullView)))
+        }
+        try compositeExport(rendered, into: target, background: background, command: command)
+        command.commit()
+        return (target, command, size)
+    }
+
+    /// Copies rendered export tiles into the target with the plain tile pipeline: no blending and no MSAA,
+    /// so a large target never allocates transient multisample attachments.
+    private func compositeExport(_ tiles: [(texture: MTLTexture, placement: TilePlan.Placement)],
+                                 into target: MTLTexture, background: ExportBackground, command: MTLCommandBuffer) throws {
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = target
+        pass.colorAttachments[0].clearColor = background == .white ? MTLClearColorMake(1, 1, 1, 1) : MTLClearColorMake(0, 0, 0, 0)
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { throw Failure.command }
+        encoder.setRenderPipelineState(tilePipeline)
+        let width = Double(target.width), height = Double(target.height)
+        for tile in tiles {
+            let p = tile.placement
+            var rect = SIMD4(Float(Double(p.x0) / width * 2 - 1), Float(1 - Double(p.y0) / height * 2),
+                             Float(Double(p.x1) / width * 2 - 1), Float(1 - Double(p.y1) / height * 2))
+            var linear: UInt32 = 0 // exact export scale: nearest 1:1
+            encoder.setVertexBytes(&rect, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
+            encoder.setFragmentBytes(&linear, length: MemoryLayout<UInt32>.stride, index: 0)
+            encoder.setFragmentTexture(tile.texture, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        }
+        encoder.endEncoding()
     }
 }
 
