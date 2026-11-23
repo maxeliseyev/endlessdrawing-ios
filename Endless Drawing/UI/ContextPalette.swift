@@ -31,6 +31,7 @@ struct ContextPalette: View {
                     if model.isShared {
                         Button("Report drawing…", systemImage: "flag") { model.startReporting() }
                     }
+                    Button("Save picture…", systemImage: "square.and.arrow.down") { model.startExport() }
                     if !model.hiddenContent.isEmpty {
                         Button("Show hidden drawings", systemImage: "eye") { model.showHiddenContent() }
                     }

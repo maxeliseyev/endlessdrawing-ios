@@ -38,6 +38,7 @@ struct ContentView: View {
         }
         .overlay(alignment: .top) {
             if model.reporting { ReportBar(model: model).padding(.top, 12) }
+            if model.exporting { ExportBar(model: model).padding(.top, 12) }
         }
         .overlay(alignment: .bottomLeading) {
             Text(model.centerCoordinates)
@@ -52,6 +53,7 @@ struct ContentView: View {
                 .padding(.bottom, 12)
         }
         .overlay(alignment: .bottom) {
+            if model.exporting { ExportPanel(model: model).padding(.horizontal, 16).padding(.bottom, 12) }
             if let notice = model.notice {
                 NoticeToast(text: notice).padding(.bottom, 24)
                     .task(id: notice) {
@@ -62,6 +64,11 @@ struct ContentView: View {
         }
         .sheet(isPresented: $model.termsPrompt) { TermsSheet(model: model) }
         .sheet(isPresented: $model.reportSheet) { ReportSheet(model: model) }
+        .sheet(isPresented: $model.showExportShare) {
+            if let url = model.exportShareURL, let png = model.exportSharePNG {
+                ShareSheet(url: url, png: png)
+            }
+        }
         .preferredColorScheme(.light)
         .alert("Canvas unavailable", isPresented: Binding(get: { model.failure != nil }, set: { if !$0 { model.failure = nil } })) {
             Button("Retry") { model.failure = nil; model.command?(.retry) }

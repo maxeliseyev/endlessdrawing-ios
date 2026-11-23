@@ -21,6 +21,16 @@
         }
       }
     },
+    "Background" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Фон"
+          }
+        }
+      }
+    },
     "Before you draw" : {
       "localizations" : {
         "ru" : {
@@ -37,6 +47,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Кисть"
+          }
+        }
+      }
+    },
+    "By drawings" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По рисункам"
           }
         }
       }
@@ -361,6 +381,16 @@
         }
       }
     },
+    "Only drawings loaded around the view" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только рисунки, загруженные вокруг экрана"
+          }
+        }
+      }
+    },
     "Opening local drawing storage…" : {
       "localizations" : {
         "ru" : {
@@ -479,6 +509,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Круглая кисть"
+          }
+        }
+      }
+    },
+    "Save" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить"
+          }
+        }
+      }
+    },
+    "Save picture…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить картинку…"
+          }
+        }
+      }
+    },
+    "Scale" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Масштаб"
           }
         }
       }
@@ -673,6 +733,16 @@
         }
       }
     },
+    "Transparent" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прозрачный"
+          }
+        }
+      }
+    },
     "Undo" : {
       "localizations" : {
         "ru" : {
@@ -699,6 +769,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Что не так?"
+          }
+        }
+      }
+    },
+    "White" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Белый"
           }
         }
       }

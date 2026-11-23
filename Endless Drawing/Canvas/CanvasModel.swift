@@ -43,6 +43,19 @@ final class CanvasModel {
     var reportSelection: [ReportTarget] = [] { didSet { onReportChanged?() } }
     @ObservationIgnored var onReportChanged: (() -> Void)?
     var reportSheet = false
+    /// Export mode (M6.3): taps toggle authors, fingers/Pencil move the canvas; no permanent button.
+    var exporting = false { didSet { if !exporting { exportFrame = nil; exportShareURL = nil } } }
+    var exportSelection = ExportSelection.defaultSelection { didSet { exportFrame = nil; onExportChanged?() } }
+    var exportScale = ExportScale.one
+    var exportBackground = ExportBackground.transparent
+    /// Manual frame; nil = automatic from the selected strokes («По рисункам»).
+    var exportFrame: ExportFrame?
+    var exportBusy = false
+    var exportShareURL: URL?
+    var exportSharePNG: Data?
+    var showExportShare = false
+    @ObservationIgnored var onExportChanged: (() -> Void)?
+    @ObservationIgnored var exportRenderer: ((ExportSelection, ExportFrame?, ExportScale, ExportBackground) async throws -> ExportRenderResult)?
     /// Short, self-dismissing confirmation (e.g. after a report).
     var notice: String?
     var failure: String?
@@ -133,6 +146,31 @@ final class CanvasModel {
     }
 
     func showHiddenContent() { hiddenContent = HiddenContent(); persistHidden() }
+
+    // MARK: Export (M6.3)
+
+    func startExport() {
+        paletteAnchor = nil; reporting = false
+        exportSelection = .defaultSelection
+        exportFrame = nil; exportScale = .one; exportBackground = .transparent
+        exportShareURL = nil
+        exporting = true
+    }
+
+    /// A tap on our stroke toggles «мои»; on someone else's, toggles that author.
+    func toggleExport(_ target: ExportTarget) {
+        exportSelection = Export.toggleAuthor(exportSelection, own: target.own, author: target.author)
+    }
+
+    var exportSummary: String {
+        Export.summary(own: exportSelection.own, authorCount: exportSelection.authors.count)
+    }
+
+    /// Renders the current selection/frame/scale/background; the controller owns the Metal renderer.
+    func renderExport(scale: ExportScale? = nil, background: ExportBackground? = nil) async throws -> ExportRenderResult {
+        guard let exportRenderer else { throw DrawingDataError.invalidTransition }
+        return try await exportRenderer(exportSelection, exportFrame, scale ?? exportScale, background ?? exportBackground)
+    }
 
     private func hide(strokes: [UUID], authors: [String]) {
         hiddenContent.hide(strokes: strokes, authors: authors)

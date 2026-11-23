@@ -105,7 +105,7 @@ nonisolated enum TilePlan {
                          x1: pixel(key.tx + 1, view.origin.x), y1: pixel(key.ty + 1, view.origin.y))
     }
 
-    private static func covering(_ view: Rect, scale: Double, margin: Int64) -> [Key] {
+    static func covering(_ view: Rect, scale: Double, margin: Int64) -> [Key] {
         let world = worldSize(scale: scale)
         let x0 = Int64((view.minX / world).rounded(.down)) - margin, x1 = Int64((view.maxX / world).rounded(.down)) + margin
         let y0 = Int64((view.minY / world).rounded(.down)) - margin, y1 = Int64((view.maxY / world).rounded(.down)) + margin
