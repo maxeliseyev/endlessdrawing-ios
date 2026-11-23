@@ -381,6 +381,16 @@
         }
       }
     },
+    "Only drawings loaded around the view" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только рисунки, загруженные вокруг экрана"
+          }
+        }
+      }
+    },
     "Opening local drawing storage…" : {
       "localizations" : {
         "ru" : {

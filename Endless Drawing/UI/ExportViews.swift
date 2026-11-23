@@ -68,6 +68,8 @@ struct ExportPanel: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(model.exportBusy)
                 }
+                Text("Only drawings loaded around the view")
+                    .font(.caption2).foregroundStyle(.tertiary)
             }
         }
         .padding(16)

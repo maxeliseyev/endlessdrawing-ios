@@ -220,7 +220,9 @@ final class CanvasViewController: UIViewController {
     }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if presses.contains(where: { $0.key?.keyCode == .keyboardF10 && $0.key?.modifierFlags.contains(.shift) == true }) {
+        if presses.contains(where: { $0.key?.keyCode == .keyboardEscape }) {
+            if model.exporting { model.exporting = false } else if model.reporting { model.reporting = false }
+        } else if presses.contains(where: { $0.key?.keyCode == .keyboardF10 && $0.key?.modifierFlags.contains(.shift) == true }) {
             showTools()
         } else {
             super.pressesBegan(presses, with: event)
