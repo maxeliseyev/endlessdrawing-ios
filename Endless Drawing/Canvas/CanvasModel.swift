@@ -2,6 +2,11 @@ import Observation
 import SwiftUI
 import UIKit
 
+/// The active tool: draw with the selected brush, move the canvas, or erase own strokes (web parity M6.2).
+nonisolated enum CanvasTool: String, CaseIterable, Codable, Sendable {
+    case brush, hand, eraser
+}
+
 @MainActor
 @Observable
 final class CanvasModel {
@@ -20,6 +25,7 @@ final class CanvasModel {
     private static let hiddenStrokesKey = "hiddenStrokes", hiddenAuthorsKey = "hiddenAuthors"
     private static let termsKey = "acceptedTerms"
     private static let fingerDrawingKey = "fingerDrawing", pencilSeenKey = "pencilSeen"
+    private static let toolKey = "tool"
     /// Bump when /terms changes materially: everyone is asked again before drawing.
     static let termsVersion = "terms.v1"
     static let termsURL = URL(string: "https://endlessdrawing.com/terms")!
@@ -49,6 +55,10 @@ final class CanvasModel {
     }
     var canUndo = false
     var graphicsLimited = false
+    /// Active tool; persisted only in the live app, never forced back to brush on launch.
+    var tool = CanvasTool.brush { didSet { defaults?.set(tool.rawValue, forKey: Self.toolKey) } }
+    /// Rounded world centre shown bottom-left (web parity M6.1); updated only when the rounded value changes.
+    var centerCoordinates = "x: 0  y: 0"
     private(set) var worldState: WorldRenderState?
     private(set) var storageReady = false
     @ObservationIgnored var command: ((Command) -> Void)?
@@ -79,6 +89,7 @@ final class CanvasModel {
         termsAccepted = defaults == nil || defaults?.string(forKey: Self.termsKey) == Self.termsVersion
         fingerChoice = defaults?.object(forKey: Self.fingerDrawingKey) as? Bool
         pencilSeen = defaults?.bool(forKey: Self.pencilSeenKey) ?? false
+        if let stored = defaults?.string(forKey: Self.toolKey), let value = CanvasTool(rawValue: stored) { tool = value }
     }
 
     func setFingerDrawing(_ on: Bool) {
@@ -151,6 +162,9 @@ final class CanvasModel {
         guard let previousBrush else { return }
         style.brush = previousBrush // didSet records the current shape as the next "previous"
     }
+
+    /// The Pencil squeeze / double-tap action: toggle the brush and the eraser.
+    func switchEraser() { tool = tool == .eraser ? .brush : .eraser }
     var canDraw: Bool {
         !isShared || (storageReady && !graphicsLimited && worldState?.status != .blocked && worldState?.status != .dense
                       && worldState?.issue != .storage && worldState?.issue != .banned && (worldState?.pendingCount ?? 0) < 64)
@@ -279,6 +293,13 @@ final class CanvasModel {
         if world == nil { await bootstrap?.value }
         guard let world else { throw DrawingDataError.invalidTransition }
         accept(try await world.undo())
+    }
+
+    /// Eraser: hides the stroke optimistically and cancels a pending create or queues a server delete.
+    func erase(strokeID: UUID) async throws {
+        if world == nil { await bootstrap?.value }
+        guard let world else { throw DrawingDataError.invalidTransition }
+        accept(try await world.delete(strokeID: strokeID))
     }
 
     private func accept(_ value: WorldRenderState) {

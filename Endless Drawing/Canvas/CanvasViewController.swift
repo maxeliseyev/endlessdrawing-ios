@@ -22,6 +22,8 @@ final class CanvasViewController: UIViewController {
     /// The touch drawing the current stroke: a Pencil, or a finger in finger-drawing mode.
     private var drawingID: ObjectIdentifier?
     private var drawingWithFinger = false
+    /// Eraser drags (Pencil / mouse / drawing finger): origin and whether it already erased on move.
+    private var eraseTouches: [ObjectIdentifier: EraseGesture] = [:]
     private var fingerIDs: [ObjectIdentifier: Int] = [:]
     private var nextFingerID = 0
     /// Finger-drawing mode, decided when the first finger of a gesture lands and kept until all lift.
@@ -233,26 +235,76 @@ final class CanvasViewController: UIViewController {
             if drawingWithFinger { abandonFingerStroke() } // the Pencil wins over a finger stroke
             fingerGesture.abandonDrawing()
             guard drawingID == nil else { continue }
-            guard startStroke(touch) else { continue }
-            lastPencilPoint = touch.location(in: surface)
+            switch model.tool {
+            case .eraser: beginErase(touch, immediate: true)
+            case .hand: beginNavigation(touch, id: trackNavigation(touch, at: screen(touch)))
+            case .brush:
+                guard startStroke(touch) else { continue }
+                lastPencilPoint = touch.location(in: surface)
+            }
         }
         for touch in touches where touch.type == .direct {
             model.userInteracted(camera: camera)
-            nextFingerID += 1
-            let id = nextFingerID, point = screen(touch)
-            fingerIDs[ObjectIdentifier(touch)] = id
-            fingerPoints[id] = point
-            if fingersDraw { fingerBegan(touch, id: id, at: point); continue }
-            navigation.begin(id: id, point: point, camera: camera)
-            if drawingID != nil { navigation.blockUntilTouchesEnd() }
-            if navigation.touches.count == 1 && drawingID == nil && !navigation.blocked && !model.reporting {
+            let point = screen(touch)
+            if model.reporting {
+                beginNavigation(touch, id: trackNavigation(touch, at: point))
+            } else if model.tool == .eraser && fingersDraw {
+                // A finger erases on movement or tap, so a long press can still open tools.
+                let id = trackNavigation(touch, at: point)
+                eraseTouches[ObjectIdentifier(touch)] = EraseGesture(origin: point, moved: false)
                 armLongPress(at: point) { [weak self] in
-                    guard let self, drawingID == nil, !navigation.blocked, navigation.touches.count == 1 else { return nil }
-                    return navigation.touches.values.first
+                    guard let self, self.eraseTouches[ObjectIdentifier(touch)] != nil else { return nil }
+                    return self.fingerPoints[id]
                 }
-            } else { longPress?.cancel() }
+            } else if model.tool == .hand {
+                beginNavigation(touch, id: trackNavigation(touch, at: point))
+            } else if fingersDraw {
+                fingerBegan(touch, id: trackNavigation(touch, at: point), at: point)
+            } else {
+                beginNavigation(touch, id: trackNavigation(touch, at: point))
+            }
+        }
+        for touch in touches where touch.type == .indirectPointer && !model.reporting {
+            guard event?.buttonMask.contains(.secondary) != true else { continue } // secondary click opens the palette
+            model.userInteracted(camera: camera)
+            guard drawingID == nil else { continue }
+            switch model.tool {
+            case .eraser: beginErase(touch, immediate: true)
+            case .hand: beginNavigation(touch, id: trackNavigation(touch, at: screen(touch)))
+            case .brush: _ = startStroke(touch)
+            }
         }
         updateFrameLoop()
+    }
+
+    /// Registers any non-drawing pointer (finger, Pencil in hand mode, mouse) for navigation tracking.
+    private func trackNavigation(_ touch: UITouch, at point: WorldPoint) -> Int {
+        nextFingerID += 1
+        let id = nextFingerID
+        fingerIDs[ObjectIdentifier(touch)] = id
+        fingerPoints[id] = point
+        return id
+    }
+
+    private func beginNavigation(_ touch: UITouch, id: Int) {
+        beginNavigation(id: id, point: screen(touch))
+    }
+
+    private func beginNavigation(id: Int, point: WorldPoint) {
+        navigation.begin(id: id, point: point, camera: camera)
+        if drawingID != nil { navigation.blockUntilTouchesEnd() }
+        if navigation.touches.count == 1 && drawingID == nil && !navigation.blocked && !model.reporting {
+            armLongPress(at: point) { [weak self] in
+                guard let self, drawingID == nil, !navigation.blocked, navigation.touches.count == 1 else { return nil }
+                return navigation.touches.values.first
+            }
+        } else { longPress?.cancel() }
+    }
+
+    private func beginErase(_ touch: UITouch, immediate: Bool) {
+        let point = screen(touch)
+        if immediate { erase(at: point) }
+        eraseTouches[ObjectIdentifier(touch)] = EraseGesture(origin: point, moved: immediate)
     }
 
     /// Finger-drawing mode: one finger draws, a quick second finger turns it into navigation (`FingerGesture`).
@@ -307,9 +359,31 @@ final class CanvasViewController: UIViewController {
         requestFrame()
     }
 
+    /// Erases the topmost own stroke under a screen point (M6.2). Shared: cancel the newest pending
+    /// create or delete the highest-seq own stroke, hiding it optimistically through the journal.
+    private func erase(at point: WorldPoint) {
+        let world = camera.worldPoint(at: point, viewport: viewport)
+        let tolerance = 4 / camera.zoom
+        if model.isShared {
+            guard let state = sharedState,
+                  let id = EraseSelection.target(at: world, tolerance: tolerance, pending: state.pending,
+                                                 confirmed: state.confirmed, hidden: state.hidden) else { return }
+            Task { try? await model.erase(strokeID: id) }
+        } else {
+            guard let stroke = localStrokes.last(where: { BrushHitTest.contains(world, in: $0, tolerance: tolerance) }) else { return }
+            localStrokes.removeAll { $0.id == stroke.id }
+            gpuStrokes[stroke.id] = nil
+            finalTasks.removeValue(forKey: stroke.id)?.cancel()
+            model.canUndo = !localStrokes.isEmpty
+            synchronizeStrokes()
+        }
+        requestFrame()
+    }
+
     func moved(_ touches: Set<UITouch>, event: UIEvent?) {
         for touch in touches {
-            let finger = fingerIDs[ObjectIdentifier(touch)]
+            let touchID = ObjectIdentifier(touch)
+            let finger = fingerIDs[touchID]
             if let finger {
                 let point = screen(touch)
                 fingerPoints[finger] = point
@@ -318,13 +392,22 @@ final class CanvasViewController: UIViewController {
                     if termsCandidate == finger { askTerms() } // clearly a stroke: explain why nothing is drawn
                 }
             }
-            if ObjectIdentifier(touch) == drawingID {
+            if touchID == drawingID {
                 for sample in event?.coalescedTouches(for: touch) ?? [touch] {
                     input.appendReal(world(sample), timestamp: sample.timestamp)
                 }
                 input.replacePredictions((event?.predictedTouches(for: touch) ?? []).map(world))
                 if !drawingWithFinger { lastPencilPoint = touch.location(in: surface) }
                 updatePreview()
+            } else if var gesture = eraseTouches[touchID] {
+                let point = screen(touch)
+                if !gesture.moved {
+                    guard point.distance(to: gesture.origin) > 10 else { continue }
+                    gesture.moved = true
+                    longPress?.cancel()
+                }
+                eraseTouches[touchID] = gesture
+                for sample in event?.coalescedTouches(for: touch) ?? [touch] { erase(at: screen(sample)) }
             } else if let finger, drawingID == nil,
                       let next = navigation.move(id: finger, point: screen(touch), viewport: viewport) {
                 camera = next
@@ -353,6 +436,9 @@ final class CanvasViewController: UIViewController {
                 drawingWithFinger = false
                 pendingPreview = nil
                 renderer?.preview = nil
+            }
+            if let gesture = eraseTouches.removeValue(forKey: ObjectIdentifier(touch)), !cancelled, !gesture.moved {
+                erase(at: screen(touch)) // a tap that never moved still erases
             }
             if let id = fingerIDs.removeValue(forKey: ObjectIdentifier(touch)) {
                 navigation.end(id: id)
@@ -388,6 +474,7 @@ final class CanvasViewController: UIViewController {
         fingerGesture.reset()
         fingerIDs.removeAll()
         fingerPoints.removeAll()
+        eraseTouches.removeAll()
         termsCandidate = nil
         reportTaps.removeAll()
         updateFrameLoop()
@@ -487,6 +574,8 @@ final class CanvasViewController: UIViewController {
 
     private func requestFrame() {
         renderer?.camera = camera
+        let coordinates = coordinateText(x: camera.center.x, y: camera.center.y)
+        if model.centerCoordinates != coordinates { model.centerCoordinates = coordinates }
         frameRequested = true
         resumeDisplayLink()
         guard model.isShared, viewport.isValid,
@@ -794,6 +883,13 @@ private final class CanvasSurface: MTKView {
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { inputController?.ended(touches, event: event, cancelled: true) }
 }
 
+/// One eraser pointer. `moved` is true for Pencil/mouse (erase on contact) and false for a drawing
+/// finger (erase on movement or tap, so a long press can still open the palette).
+private struct EraseGesture {
+    var origin: WorldPoint
+    var moved: Bool
+}
+
 /// GPU geometry by stroke id with a running byte total: budget checks never re-sum the whole scene.
 private struct GeometryCache {
     private(set) var bytes = 0
@@ -858,6 +954,9 @@ extension CanvasViewController: UIPencilInteractionDelegate {
         case .switchPrevious:
             cancelGesture() // a draft never changes style mid-stroke
             model.switchToPreviousBrush()
+        case .switchEraser:
+            cancelGesture() // a draft never changes tool mid-stroke
+            model.switchEraser()
         case .togglePalette:
             if model.paletteAnchor != nil { model.paletteAnchor = nil; return }
             // Anchor: hover pose → last Pencil contact → centre (clamped on screen by ContentView).
