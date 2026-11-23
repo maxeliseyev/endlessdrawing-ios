@@ -25,7 +25,7 @@ struct ContextPalette: View {
             Capsule().fill(.secondary.opacity(0.4)).frame(width: 36, height: 5)
                 .accessibilityHidden(true)
             HStack {
-                Text("Brush").font(.headline)
+                Text(toolTitle).font(.headline)
                 Spacer()
                 Menu {
                     if model.isShared {
@@ -53,6 +53,14 @@ struct ContextPalette: View {
         if let move { handle.gesture(move) } else { handle }
     }
 
+    private var toolTitle: String {
+        switch model.tool {
+        case .brush: String(localized: "Brush")
+        case .hand: String(localized: "Hand")
+        case .eraser: String(localized: "Eraser")
+        }
+    }
+
     private var customColor: Binding<CGColor> {
         Binding(get: { model.style.color.cgColor },
                 set: { if let color = InkColor($0) { model.style.color = color } })
@@ -73,6 +81,11 @@ struct ContextPalette: View {
     private var tools: some View {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                Picker("Tool", selection: $model.tool) {
+                    Label("Brush", systemImage: "paintbrush.pointed").tag(CanvasTool.brush)
+                    Label("Hand", systemImage: "hand.raised").tag(CanvasTool.hand)
+                    Label("Eraser", systemImage: "eraser").tag(CanvasTool.eraser)
+                }.pickerStyle(.segmented)
                 Text(model.statusText)
                     .font(.footnote).foregroundStyle(.secondary)
                 if let state = model.worldState, state.pendingCount > 0 {
@@ -81,40 +94,42 @@ struct ContextPalette: View {
                 if model.isShared {
                     Button("Retry") { model.command?(.retry) }.frame(minHeight: 44)
                 }
-                Picker("Brush", selection: $model.style.brush) {
-                    Text("Round").tag(BrushKind.round)
-                    Text("Square").tag(BrushKind.square)
-                    Text("Chisel").tag(BrushKind.chisel)
-                    Text("Spray").tag(BrushKind.spray)
-                }.pickerStyle(.segmented)
-                HStack(spacing: 0) {
-                    ForEach(InkColor.palette, id: \.hex) { swatch($0) }
-                    // System picker: grid, spectrum, sliders and the eyedropper that samples the screen.
-                    ColorPicker(selection: customColor, supportsOpacity: false) { Text("Custom color") }
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .accessibilityLabel(Text("Custom color"))
-                }
-                if !model.recentColors.colors.isEmpty {
+                if model.tool == .brush {
+                    Picker("Brush", selection: $model.style.brush) {
+                        Text("Round").tag(BrushKind.round)
+                        Text("Square").tag(BrushKind.square)
+                        Text("Chisel").tag(BrushKind.chisel)
+                        Text("Spray").tag(BrushKind.spray)
+                    }.pickerStyle(.segmented)
                     HStack(spacing: 0) {
-                        ForEach(model.recentColors.colors, id: \.hex) { swatch($0) }
-                        ForEach(model.recentColors.colors.count..<RecentColors.capacity, id: \.self) { _ in
-                            // Fixed height: a bare Color is greedy and stretched the palette to the screen.
-                            Color.clear.frame(maxWidth: .infinity).frame(height: 44)
-                        }
+                        ForEach(InkColor.palette, id: \.hex) { swatch($0) }
+                        // System picker: grid, spectrum, sliders and the eyedropper that samples the screen.
+                        ColorPicker(selection: customColor, supportsOpacity: false) { Text("Custom color") }
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .accessibilityLabel(Text("Custom color"))
                     }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel(Text("Recent colors"))
-                }
-                VStack(alignment: .leading) {
-                    Text("Width")
-                    Slider(value: $model.style.width, in: 1...64, step: 1).accessibilityLabel(Text("Width"))
-                    Text(model.style.width.formatted(.number.precision(.fractionLength(0)))).font(.caption.monospacedDigit())
-                }
-                VStack(alignment: .leading) {
-                    Text("Opacity")
-                    Slider(value: $model.style.opacity, in: 0.05...1).accessibilityLabel(Text("Opacity"))
-                    Text(model.style.opacity.formatted(.percent.precision(.fractionLength(0)))).font(.caption.monospacedDigit())
+                    if !model.recentColors.colors.isEmpty {
+                        HStack(spacing: 0) {
+                            ForEach(model.recentColors.colors, id: \.hex) { swatch($0) }
+                            ForEach(model.recentColors.colors.count..<RecentColors.capacity, id: \.self) { _ in
+                                // Fixed height: a bare Color is greedy and stretched the palette to the screen.
+                                Color.clear.frame(maxWidth: .infinity).frame(height: 44)
+                            }
+                        }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel(Text("Recent colors"))
+                    }
+                    VStack(alignment: .leading) {
+                        Text("Width")
+                        Slider(value: $model.style.width, in: 1...64, step: 1).accessibilityLabel(Text("Width"))
+                        Text(model.style.width.formatted(.number.precision(.fractionLength(0)))).font(.caption.monospacedDigit())
+                    }
+                    VStack(alignment: .leading) {
+                        Text("Opacity")
+                        Slider(value: $model.style.opacity, in: 0.05...1).accessibilityLabel(Text("Opacity"))
+                        Text(model.style.opacity.formatted(.percent.precision(.fractionLength(0)))).font(.caption.monospacedDigit())
+                    }
                 }
                 HStack {
                     Button("Undo", systemImage: "arrow.uturn.backward") { model.command?(.undo) }
